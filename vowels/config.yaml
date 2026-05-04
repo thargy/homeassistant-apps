@@ -1,0 +1,15 @@
+name: "Vowels (Automated Electrical Energy System)"
+description: "A highly resilient, native Python-based energy orchestrator that solves non-linear constraints and manages deferrable loads via a Resource API."
+version: "0.1.0"
+slug: "vowels"
+init: false
+image: "ghcr.io/thargy/{arch}-vowels"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+map:
+  - config:rw
+  - share:rw
+options: {}
+schema: {}

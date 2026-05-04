@@ -1,0 +1,52 @@
+#include <tunables/global>
+
+profile vowels flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  # Capabilities
+  file,
+  signal (send) set=(kill,term,int,hup,cont),
+
+  # S6-Overlay
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /package/** ix,
+  /command/** ix,
+  /etc/services.d/** rwix,
+  /etc/cont-init.d/** rwix,
+  /etc/cont-finish.d/** rwix,
+  /run/{,**} rwk,
+  /dev/tty rw,
+
+  # Bashio
+  /usr/lib/bashio/** ix,
+  /tmp/** rwk,
+
+  # Access to config and local data
+  /data/** rw,
+  /share/** rw,
+
+  # Start new profile for python process
+  /usr/bin/python3 cx -> vowels_python,
+
+  profile vowels_python flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    # Receive signals from S6-Overlay
+    signal (receive) peer=*_vowels,
+
+    /data/** rw,
+    /share/** rw,
+
+    # Basic execution
+    /usr/bin/python3 r,
+    /usr/local/lib/python*/** r,
+    /app/** r,
+    /bin/bash rix,
+    /bin/echo ix,
+    /etc/passwd r,
+    /dev/tty rw,
+  }
+}
