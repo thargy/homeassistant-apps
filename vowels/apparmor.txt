@@ -28,10 +28,10 @@ profile vowels flags=(attach_disconnected,mediate_deleted) {
   /data/** rw,
   /share/** rw,
 
-  # Start new profile for python process
-  /usr/bin/python3 cx -> vowels_python,
+  # Start new profile for C# daemon process
+  /app/vowels cx -> vowels_daemon,
 
-  profile vowels_python flags=(attach_disconnected,mediate_deleted) {
+  profile vowels_daemon flags=(attach_disconnected,mediate_deleted) {
     #include <abstractions/base>
 
     # Receive signals from S6-Overlay
@@ -41,12 +41,15 @@ profile vowels flags=(attach_disconnected,mediate_deleted) {
     /share/** rw,
 
     # Basic execution
-    /usr/bin/python3 r,
-    /usr/local/lib/python*/** r,
-    /app/** r,
+    /app/vowels r,
     /bin/bash rix,
     /bin/echo ix,
     /etc/passwd r,
     /dev/tty rw,
+
+    # .NET Native AOT needs (minimal as it is statically linked)
+    /lib/ld-musl-*.so.1 m,
+    /usr/lib/libstdc++.so.* m,
+    /usr/lib/libgcc_s.so.* m,
   }
 }

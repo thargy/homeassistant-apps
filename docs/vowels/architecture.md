@@ -1,7 +1,7 @@
 # Vowels — Automated Electrical Energy System Architecture
 
 ## Concept
-**Vowels** (Automated Electrical Energy System) is our custom, native Python-based energy orchestrator. It is designed to replace EMHASS, solve physical non-linear constraints (like DC-coupled solar clipping), and provide a highly resilient, modular, and real-time control loop for the home.
+**Vowels** (Automated Electrical Energy System) is our custom, C#-based energy orchestrator (.NET 10 Native AOT). It is designed to replace EMHASS, solve physical non-linear constraints (like DC-coupled solar clipping), and provide a highly resilient, modular, and real-time control loop for the home.
 
 ## Core Architectural Paradigm: The Resource API
 Vowels is built on a highly modular **Resource API** abstraction. Rather than hardcoding specific devices (Zappi, SolarEdge), the system treats all sources and loads as independent integration modules that plug into a central allocator.
@@ -29,24 +29,19 @@ The central Vowels greedy optimizer accepts these profiles, schedules them again
 5. **Override Detection:** Explicitly designed to differentiate between a "Vowels automated command" and a "User manual override" (e.g., guest car, forced boost), backing off appropriately.
 6. **Smart Notifications:** Pushes mobile phone notifications for critical failures or manual interventions, but stays silent during routine operations.
 7. **Bespoke Storage:** Uses its own optimized file-backed memory/storage (JSON/CSV or local SQLite) to prevent HA Recorder/DB bloat and ensure lightning-fast historical queries.
-8. **Host Agnostic & Performant:** Execution targets a 1s-15s continuous loop. It will be built as a standalone Home Assistant App (formerly known as an Add-on) to ensure it runs completely independently in its own container, without hammering the core HA event loop.
-
-## Proposed Module Structure (HA App)
+8. **Host Agnostic & Performant:** Execution targets a 1s-15s continuous loop. It will be built as a standalone Home Assistant App (.NET Native AOT) to ensure it runs completely independently in its own container, with minimal CPU and memory overhead.
 
 ### 0. `vowels-app` (Docker Container)
-- The HA App wrapper. Contains the `config.yaml`, `Dockerfile`, and `run.sh` entrypoint that Home Assistant Supervisor uses to install and manage the App lifecycle.
+- The HA App wrapper. Contains the `config.yaml`, `Dockerfile`, and the compiled .NET Native binary.
 
-### 1. `vowels_storage`
+### 1. `Vowels.Storage`
 - Agnostic to integrations; manages the bespoke high-speed file store mapped to the App's `/data` volume for long-term granular data and confidence indicators. 
 
-### 2. `vowels_forecaster`
-- Evaluates multi-day horizons. Based *exclusively* on data from `vowels_storage` and `vowels_realtime`. It knows absolutely nothing about Home Assistant. Output prediction objects back into the system.
+### 2. `Vowels.Forecaster`
+- Evaluates multi-day horizons. Based *exclusively* on data from storage and real-time inputs.
 
-### 3. `vowels_realtime`
-- Responsible for querying integrations for real-time state, capabilities, and confidence indicators.
-- Provides utility libraries for integrations to use (e.g., querying external APIs, retrieving HA states/attributes via WebSocket/REST, calculating confidence).
-- Responsible for informing integrations of decisions and control impulses.
+### 3. `Vowels.RealTime`
+- Responsible for querying integrations for real-time state, capabilities, and confidence indicators via WebSocket/REST/Modbus.
 
-### 4. `vowels_engine` (The Greedy Optimizer)
-- The core loop. Calls `vowels_realtime` for updates, updates `vowels_storage` with the latest data, updates `vowels_forecaster` as appropriate, and computes the theoretical optimal schedule (prioritizing PV headroom).
-- Informs `vowels_realtime` of any actuation actions that are necessary.
+### 4. `Vowels.Engine` (The Greedy Optimizer)
+- The core loop. Calls `Vowels.RealTime` for updates, updates `Vowels.Storage` with the latest data, and computes the optimal schedule (prioritizing PV headroom).

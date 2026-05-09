@@ -2,12 +2,13 @@
 
 **Automated Electrical Energy System**
 
-A highly resilient, native Python-based energy orchestrator that solves non-linear constraints and manages deferrable loads via a Resource API. It is designed to act as a Home Assistant App, providing sub-minute control resolution without impacting the Home Assistant Core event loop.
+A highly resilient, C#-based energy orchestrator (.NET Native AOT) that solves non-linear constraints and manages deferrable loads via a Resource API. It is designed to act as a Home Assistant App, providing sub-minute control resolution without impacting the Home Assistant Core event loop.
 
 ## Key Features
 
 * **Resource API Paradigm**: Agnostic control over EV Chargers, Batteries, and Solar arrays.
 * **Greedy Optimizer**: Real-time evaluation of PV headroom to actuate deferrable loads.
+* **C# / .NET Native AOT**: Single-file native binary with minimal CPU and memory footprint.
 * **Intelligent Fallbacks**: Robust handling of Modbus timeouts or API outages.
 * **Isolated Execution**: Runs entirely in its own Docker container with bespoke file-backed historical storage.
 

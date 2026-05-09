@@ -2,5 +2,5 @@
 
 bashio::log.info "Starting Vowels (Automated Electrical Energy System)..."
 
-# Run our Python daemon (it should stay in foreground)
-exec python3 /app/main.py
+# Run our .NET Native AOT daemon
+exec /app/vowels

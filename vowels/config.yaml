@@ -1,5 +1,5 @@
 name: "Vowels (Automated Electrical Energy System)"
-description: "A highly resilient, native Python-based energy orchestrator that solves non-linear constraints and manages deferrable loads via a Resource API."
+description: "A highly resilient, C#-based energy orchestrator (.NET Native AOT) that solves non-linear constraints and manages deferrable loads via a Resource API."
 version: "0.1.0"
 slug: "vowels"
 init: false
