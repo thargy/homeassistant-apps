@@ -77,7 +77,9 @@ public class StorageTests
 
         using (var manager = new PagedMmfManager(testFile, 8192))
         {
-            var store = new EntityStore(manager);
+            EntityStore.ResetForTesting();
+            EntityStore.Initialize(manager);
+            var store = EntityStore.Instance;
             
             // 1. Initial Schema
             var attrs1 = new[] { new BinarySpec.AttributeDefinition { NameStringId = 1, Type = BinarySpec.VowelsType.Double } };
@@ -111,4 +113,3 @@ public class StorageTests
         if (File.Exists(testFile)) File.Delete(testFile);
     }
 }
-

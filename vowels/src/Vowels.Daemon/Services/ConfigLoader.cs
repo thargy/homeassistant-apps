@@ -8,12 +8,15 @@ namespace Vowels.Daemon.Services;
 
 public class ConfigLoader
 {
+    private static ConfigLoader? _instance;
+    public static ConfigLoader Instance => _instance ??= new ConfigLoader();
+
     private readonly IDeserializer _yamlDeserializer;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ConfigLoader"/> class using AOT-compatible static deserializers.
     /// </summary>
-    public ConfigLoader()
+    private ConfigLoader()
     {
         // Check if dynamic code (reflection) is supported. 
         // In Native AOT, this returns false.

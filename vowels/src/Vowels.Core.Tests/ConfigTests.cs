@@ -11,7 +11,7 @@ public class ConfigTests
     public void Load_ShouldMergeYamlAndJson()
     {
         // Arrange
-        var loader = new ConfigLoader();
+        var loader = ConfigLoader.Instance;
         var yamlPath = "test_config.yaml";
         var jsonPath = "test_options.json";
 
@@ -19,13 +19,12 @@ public class ConfigTests
 ha_url: http://dev-ha:8123
 ingress_port: 8080
 entities:
-  - entity_id: sensor.test_yaml
-    page_hint: 5
+  - id: sensor.test_yaml
 ";
         var jsonContent = @"{
             ""ha_url"": ""http://supervisor/core/api"",
             ""entities"": [
-                { ""entity_id"": ""sensor.test_json"", ""page_hint"": 10 }
+                { ""id"": ""sensor.test_json"" }
             ]
         }";
 
@@ -39,9 +38,9 @@ entities:
 
             // Assert
             Assert.Equal("http://supervisor/core/api", config.HaUrl);
-            Assert.Equal(8080, config.IngressPort); // Kept from YAML if not in JSON (assuming merge logic, though currently I just replace)
-            // Wait, my current implementation replaces. Let's adjust implementation or test.
-            // If the user wants "merging", I should probably implement a real merge.
+            Assert.Equal(8080, config.IngressPort);
+            Assert.Single(config.Entities);
+            Assert.Equal("sensor.test_json", config.Entities[0].Id);
         }
         finally
         {

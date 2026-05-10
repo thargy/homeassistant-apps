@@ -10,6 +10,22 @@ namespace Vowels.Core.Registry;
 /// </summary>
 public class EntityRegistry
 {
+    private static EntityRegistry? _instance;
+    public static EntityRegistry Instance => _instance ?? throw new InvalidOperationException("EntityRegistry must be initialized with an EntityStore first.");
+
+    public static void Initialize(EntityStore store)
+    {
+        _instance = new EntityRegistry(store);
+    }
+
+    /// <summary>
+    /// Resets the singleton instance for testing purposes.
+    /// </summary>
+    public static void ResetForTesting()
+    {
+        _instance = null;
+    }
+
     private readonly EntityStore _store;
     private readonly ObservableCollection<EntityRequest> _entities = new();
 
@@ -18,7 +34,7 @@ public class EntityRegistry
     /// </summary>
     public ReadOnlyObservableCollection<EntityRequest> Entities { get; }
 
-    public EntityRegistry(EntityStore store)
+    private EntityRegistry(EntityStore store)
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         Entities = new ReadOnlyObservableCollection<EntityRequest>(_entities);

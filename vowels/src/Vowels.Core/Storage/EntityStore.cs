@@ -4,20 +4,36 @@ using System.Runtime.InteropServices;
 
 namespace Vowels.Core.Storage;
 
-/// <summary>
-/// Provides a paged storage engine for managing entity metadata, schema versions, and state history.
-/// </summary>
 public partial class EntityStore
 {
+    private partial class BlobSpace { } // Defined in EntityStore.BlobSpace.cs
+
+    private static EntityStore? _instance;
+    public static EntityStore Instance => _instance ?? throw new InvalidOperationException("EntityStore must be initialized with an IPageManager first.");
+
+    public static void Initialize(IPageManager pageManager)
+    {
+        _instance = new EntityStore(pageManager);
+    }
+
+    /// <summary>
+    /// Resets the singleton instance for testing purposes.
+    /// </summary>
+    public static void ResetForTesting()
+    {
+        _instance = null;
+    }
+
     private readonly IPageManager _pageManager;
     private readonly StringTable _stringTable;
+    private readonly BlobSpace _blobSpace;
     private readonly Dictionary<uint, uint> _entityToSchemaHead = new();
 
     /// <summary>
     /// Initializes a new instance of the <see cref="EntityStore"/> class.
     /// </summary>
     /// <param name="pageManager">The page manager used to interact with the underlying storage.</param>
-    public EntityStore(IPageManager pageManager)
+    private EntityStore(IPageManager pageManager)
     {
         _pageManager = pageManager;
         if (_pageManager.PageCount == 0)
@@ -30,6 +46,7 @@ public partial class EntityStore
         var header = MemoryMarshal.Read<BinarySpec.FileHeader>(headerSpan);
         
         _stringTable = new StringTable(_pageManager, header.StringTableHeadPageId);
+        _blobSpace = new BlobSpace(_pageManager, header.BlobSpaceHeadPageId);
         
         LoadDirectory();
     }
@@ -47,6 +64,10 @@ public partial class EntityStore
         uint directoryId = _pageManager.AllocatePage(BinarySpec.PageType.Directory);
         InitializePage(directoryId, BinarySpec.PageType.Directory);
 
+        // Allocate Blob Space Head
+        uint blobSpaceId = _pageManager.AllocatePage(BinarySpec.PageType.BlobSpace);
+        InitializePage(blobSpaceId, BinarySpec.PageType.BlobSpace);
+
         var span = _pageManager.GetPageSpan(headerId);
         var header = new BinarySpec.FileHeader
         {
@@ -55,7 +76,8 @@ public partial class EntityStore
             DirtyBit = 0,
             CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             DirectoryHeadPageId = directoryId,
-            StringTableHeadPageId = stringTableId
+            StringTableHeadPageId = stringTableId,
+            BlobSpaceHeadPageId = blobSpaceId
         };
         
         MemoryMarshal.Write(span, in header);
@@ -415,6 +437,16 @@ public partial class EntityStore
                 break;
         }
     }
+
+    /// <summary>
+    /// Stores a blob of data in the storage engine.
+    /// </summary>
+    public BinarySpec.BlobPointer StoreBlob(ReadOnlySpan<byte> data) => _blobSpace.StoreBlob(data);
+
+    /// <summary>
+    /// Reads a blob of data from the storage engine.
+    /// </summary>
+    public byte[] ReadBlob(BinarySpec.BlobPointer pointer) => _blobSpace.ReadBlob(pointer);
 
     private uint GetLastPageInChain(uint headPageId)
     {

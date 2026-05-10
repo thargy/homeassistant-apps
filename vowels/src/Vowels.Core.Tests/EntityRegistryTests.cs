@@ -14,17 +14,23 @@ public class EntityRegistryTests
     {
         // Arrange
         if (File.Exists(TestDb)) File.Delete(TestDb);
-        using var manager = new PagedMmfManager(TestDb, 8192);
-        var store = new EntityStore(manager);
-        
-        var registry = new EntityRegistry(store);
+        EntityStore.ResetForTesting();
+        EntityRegistry.ResetForTesting();
 
-        // Act
-        registry.RegisterEntity("sensor.living_room_temperature");
+        using (var manager = new PagedMmfManager(TestDb, 8192))
+        {
+            EntityStore.Initialize(manager);
+            EntityRegistry.Initialize(EntityStore.Instance);
+            
+            var registry = EntityRegistry.Instance;
 
-        // Assert
-        Assert.True(registry.IsEntityRegistered("sensor.living_room_temperature"));
-        Assert.Contains(registry.Entities, e => e.EntityId == "sensor.living_room_temperature");
+            // Act
+            registry.RegisterEntity("sensor.living_room_temperature");
+
+            // Assert
+            Assert.True(registry.IsEntityRegistered("sensor.living_room_temperature"));
+            Assert.Contains(registry.Entities, e => e.EntityId == "sensor.living_room_temperature");
+        }
         
         if (File.Exists(TestDb)) File.Delete(TestDb);
     }

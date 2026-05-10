@@ -40,6 +40,7 @@ public static class BinarySpec
         public long CreatedAt;
         public uint DirectoryHeadPageId;
         public uint StringTableHeadPageId;
+        public uint BlobSpaceHeadPageId;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
