@@ -19,14 +19,11 @@ public record VowelsConfig
 
 public record EntitySchema
 {
-    [JsonPropertyName("entity_id")]
-    public string EntityId { get; init; } = string.Empty;
+    [JsonPropertyName("id")]
+    public string Id { get; init; } = string.Empty;
 
-    [JsonPropertyName("friendly_name")]
-    public string? FriendlyName { get; init; }
-
-    [JsonPropertyName("page_hint")]
-    public int PageHint { get; init; } = 1;
+    [JsonPropertyName("attributes")]
+    public List<string> Attributes { get; init; } = new();
 }
 
 [JsonSourceGenerationOptions(WriteIndented = true)]
