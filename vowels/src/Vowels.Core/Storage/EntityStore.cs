@@ -1,18 +1,19 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 
 namespace Vowels.Core.Storage;
 
 public class EntityStore
 {
     private readonly IPageManager _pageManager;
-    private readonly Dictionary<uint, (uint FirstPage, uint LastPage, ushort SchemaId, uint Reserved)> _directory = new();
+    private readonly Dictionary<uint, uint> _entityToSchemaHead = new();
 
     public EntityStore(IPageManager pageManager)
     {
         _pageManager = pageManager;
         if (_pageManager.PageCount == 0)
         {
-            InitializeFileHeader();
+            InitializeFile();
         }
         else
         {
@@ -20,135 +21,185 @@ public class EntityStore
         }
     }
 
-    private void InitializeFileHeader()
+    private void InitializeFile()
     {
-        uint pageId = _pageManager.AllocatePage(BinarySpec.PageType.Header);
+        // Allocate Page 0 (Header)
+        uint headerId = _pageManager.AllocatePage(BinarySpec.PageType.Header);
+        
+        // Allocate String Table Head
+        uint stringTableId = _pageManager.AllocatePage(BinarySpec.PageType.StringTable);
+        InitializePage(stringTableId, BinarySpec.PageType.StringTable);
+
+        // Allocate Directory Head (System Entity 0)
+        uint directoryId = _pageManager.AllocatePage(BinarySpec.PageType.Directory);
+        InitializePage(directoryId, BinarySpec.PageType.Directory);
+
+        var span = _pageManager.GetPageSpan(headerId);
+        var header = new BinarySpec.FileHeader
+        {
+            Magic = BinarySpec.Magic,
+            Version = 1,
+            DirtyBit = 0,
+            CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            DirectoryHeadPageId = directoryId,
+            StringTableHeadPageId = stringTableId
+        };
+        
+        MemoryMarshal.Write(span, ref header);
+    }
+
+    private void InitializePage(uint pageId, BinarySpec.PageType type)
+    {
         var span = _pageManager.GetPageSpan(pageId);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(0, 4), BinarySpec.Magic);
-        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(4, 2), 1); // Version
-        span[6] = 0; // DirtyBit
-        BinaryPrimitives.WriteInt64LittleEndian(span.Slice(7, 8), DateTimeOffset.UtcNow.ToUnixTimeSeconds());
-        // EntityCount at 27
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(27, 4), 0);
+        var header = new BinarySpec.PageHeader
+        {
+            Type = type,
+            NextPageId = 0,
+            DataOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>()
+        };
+        MemoryMarshal.Write(span, ref header);
     }
 
     private void LoadDirectory()
     {
-        var span = _pageManager.GetPageSpan(0);
-        uint count = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(27, 4));
-        int offset = 31;
-        for (int i = 0; i < count; i++)
-        {
-            uint id = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(offset, 4));
-            uint first = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(offset + 4, 4));
-            uint last = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(offset + 8, 4));
-            ushort schema = BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(offset + 12, 2));
-            uint reserved = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(offset + 14, 4));
-            _directory[id] = (first, last, schema, reserved);
-            offset += 18;
-        }
-    }
-
-    public void RecordState(uint entityStringId, ushort schemaId, byte confidence, uint timestampOffset, ReadOnlySpan<byte> data)
-    {
-        if (!_directory.TryGetValue(entityStringId, out var entry))
-        {
-            uint pageId = _pageManager.AllocatePage(BinarySpec.PageType.EntityData);
-            InitializeEntityPage(pageId, entityStringId, schemaId);
-            entry = (pageId, pageId, schemaId, 1);
-            _directory[entityStringId] = entry;
-            UpdateDirectoryInPage0(entityStringId, entry);
-        }
-
-        uint currentPageId = entry.LastPage;
-        var span = _pageManager.GetPageSpan(currentPageId);
-        ushort currentOffset = BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(5, 2));
+        var headerSpan = _pageManager.GetPageSpan(0);
+        var header = MemoryMarshal.Read<BinarySpec.FileHeader>(headerSpan);
         
-        bool schemaChanged = entry.SchemaId != schemaId;
-        int requiredSize = (schemaChanged ? 7 : 0) + 5 + data.Length;
-
-        if (currentOffset + requiredSize > BinarySpec.PageSize)
+        uint currentPageId = header.DirectoryHeadPageId;
+        while (currentPageId != 0)
         {
-            uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.EntityData);
-            LinkPages(currentPageId, newPageId);
-            InitializeEntityPage(newPageId, entityStringId, schemaId);
+            var pageSpan = _pageManager.GetPageSpan(currentPageId);
+            var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(pageSpan);
             
-            entry = (entry.FirstPage, newPageId, schemaId, entry.Reserved + 1); // Increment reserved as heuristic
-            _directory[entityStringId] = entry;
-            UpdateDirectoryInPage0(entityStringId, entry);
+            int recordSize = Marshal.SizeOf<BinarySpec.EntityDescriptor>();
+            int offset = Marshal.SizeOf<BinarySpec.PageHeader>();
             
-            currentPageId = newPageId;
-            span = _pageManager.GetPageSpan(currentPageId);
-            currentOffset = (ushort)(7 + 10);
-            schemaChanged = false;
-            requiredSize = 5 + data.Length;
-        }
-
-        int offset = currentOffset;
-        if (schemaChanged)
-        {
-            BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset, 4), uint.MaxValue);
-            span[offset + 4] = 0x01; // Schema Switch
-            BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(offset + 5, 2), schemaId);
-            offset += 7;
-            
-            entry = (entry.FirstPage, currentPageId, schemaId, entry.Reserved);
-            _directory[entityStringId] = entry;
-            UpdateDirectoryInPage0(entityStringId, entry);
-        }
-
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset, 4), timestampOffset);
-        span[offset + 4] = confidence;
-        data.CopyTo(span.Slice(offset + 5, data.Length));
-        
-        UpdatePageDataOffset(currentPageId, (ushort)(offset + 5 + data.Length));
-    }
-
-    private void UpdateDirectoryInPage0(uint entityStringId, (uint FirstPage, uint LastPage, ushort SchemaId, uint Reserved) entry)
-    {
-        var span = _pageManager.GetPageSpan(0);
-        uint count = BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(27, 4));
-        int offset = 31;
-        for (int i = 0; i < count; i++)
-        {
-            if (BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(offset, 4)) == entityStringId)
+            while (offset + recordSize <= pageHeader.DataOffset)
             {
-                BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset + 4, 4), entry.FirstPage);
-                BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset + 8, 4), entry.LastPage);
-                BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(offset + 12, 2), entry.SchemaId);
-                BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset + 14, 4), entry.Reserved);
+                var descriptor = MemoryMarshal.Read<BinarySpec.EntityDescriptor>(pageSpan.Slice(offset));
+                _entityToSchemaHead[descriptor.EntityIdStringId] = descriptor.SchemaHeadPageId;
+                offset += recordSize;
+            }
+            
+            currentPageId = pageHeader.NextPageId;
+        }
+    }
+
+    public uint GetOrCreateSchemaChain(uint entityIdStringId)
+    {
+        if (_entityToSchemaHead.TryGetValue(entityIdStringId, out uint schemaHeadId))
+        {
+            return schemaHeadId;
+        }
+
+        // Create new schema chain
+        schemaHeadId = _pageManager.AllocatePage(BinarySpec.PageType.SchemaChain);
+        InitializePage(schemaHeadId, BinarySpec.PageType.SchemaChain);
+        
+        // Register in Directory
+        AppendToDirectory(entityIdStringId, schemaHeadId);
+        
+        _entityToSchemaHead[entityIdStringId] = schemaHeadId;
+        return schemaHeadId;
+    }
+
+    private void AppendToDirectory(uint entityId, uint schemaHeadId)
+    {
+        var fileHeaderSpan = _pageManager.GetPageSpan(0);
+        var fileHeader = MemoryMarshal.Read<BinarySpec.FileHeader>(fileHeaderSpan);
+        
+        uint currentPageId = fileHeader.DirectoryHeadPageId;
+        uint lastPageId = currentPageId;
+        
+        while (currentPageId != 0)
+        {
+            var pageSpan = _pageManager.GetPageSpan(currentPageId);
+            var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(pageSpan);
+            
+            int recordSize = Marshal.SizeOf<BinarySpec.EntityDescriptor>();
+            if (pageHeader.DataOffset + recordSize <= BinarySpec.PageSize)
+            {
+                // Found space
+                var descriptor = new BinarySpec.EntityDescriptor 
+                { 
+                    EntityIdStringId = entityId, 
+                    SchemaHeadPageId = schemaHeadId 
+                };
+                MemoryMarshal.Write(pageSpan.Slice(pageHeader.DataOffset), ref descriptor);
+                
+                // Update offset
+                pageHeader.DataOffset += (ushort)recordSize;
+                MemoryMarshal.Write(pageSpan, ref pageHeader);
                 return;
             }
-            offset += 18;
+            
+            lastPageId = currentPageId;
+            currentPageId = pageHeader.NextPageId;
+        }
+        
+        // No space, allocate new directory page
+        uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.Directory);
+        InitializePage(newPageId, BinarySpec.PageType.Directory);
+        
+        // Link from previous
+        var lastSpan = _pageManager.GetPageSpan(lastPageId);
+        var lastHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastSpan);
+        lastHeader.NextPageId = newPageId;
+        MemoryMarshal.Write(lastSpan, ref lastHeader);
+        
+        // Write to new page
+        AppendToDirectory(entityId, schemaHeadId);
+    }
+
+    public void AddSchemaEntry(uint schemaChainHeadId, BinarySpec.SchemaEntryHeader header, ReadOnlySpan<BinarySpec.AttributeDefinition> attributes)
+    {
+        uint lastPageId = GetLastPageInChain(schemaChainHeadId);
+        var lastPageSpan = _pageManager.GetPageSpan(lastPageId);
+        var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
+
+        int recordSize = Marshal.SizeOf<BinarySpec.SchemaEntryHeader>() + (attributes.Length * Marshal.SizeOf<BinarySpec.AttributeDefinition>());
+        
+        if (pageHeader.DataOffset + recordSize > BinarySpec.PageSize)
+        {
+            // Allocate new page in schema chain
+            uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.SchemaChain);
+            InitializePage(newPageId, BinarySpec.PageType.SchemaChain);
+            
+            // Link
+            pageHeader.NextPageId = newPageId;
+            MemoryMarshal.Write(lastPageSpan, ref pageHeader);
+            
+            lastPageId = newPageId;
+            lastPageSpan = _pageManager.GetPageSpan(lastPageId);
+            pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
         }
 
-        // Add new
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset, 4), entityStringId);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset + 4, 4), entry.FirstPage);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset + 8, 4), entry.LastPage);
-        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(offset + 12, 2), entry.SchemaId);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(offset + 14, 4), entry.Reserved);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(27, 4), count + 1);
+        // Write Header
+        MemoryMarshal.Write(lastPageSpan.Slice(pageHeader.DataOffset), ref header);
+        int offset = pageHeader.DataOffset + Marshal.SizeOf<BinarySpec.SchemaEntryHeader>();
+        
+        // Write Attributes
+        for (int i = 0; i < attributes.Length; i++)
+        {
+            var attr = attributes[i];
+            MemoryMarshal.Write(lastPageSpan.Slice(offset), ref attr);
+            offset += Marshal.SizeOf<BinarySpec.AttributeDefinition>();
+        }
+
+        // Update Page Offset
+        pageHeader.DataOffset = (ushort)offset;
+        MemoryMarshal.Write(lastPageSpan, ref pageHeader);
     }
 
-    private void InitializeEntityPage(uint pageId, uint entityId, ushort schemaId)
+    private uint GetLastPageInChain(uint headPageId)
     {
-        var span = _pageManager.GetPageSpan(pageId);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(7, 4), entityId);
-        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(11, 2), schemaId);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(13, 4), BinarySpec.InvalidPageId);
-        UpdatePageDataOffset(pageId, 7 + 10);
-    }
-
-    private void LinkPages(uint current, uint next)
-    {
-        var span = _pageManager.GetPageSpan(current);
-        BinaryPrimitives.WriteUInt32LittleEndian(span.Slice(1, 4), next);
-    }
-
-    private void UpdatePageDataOffset(uint pageId, ushort offset)
-    {
-        var span = _pageManager.GetPageSpan(pageId);
-        BinaryPrimitives.WriteUInt16LittleEndian(span.Slice(5, 2), offset);
+        uint current = headPageId;
+        while (true)
+        {
+            var span = _pageManager.GetPageSpan(current);
+            var header = MemoryMarshal.Read<BinarySpec.PageHeader>(span);
+            if (header.NextPageId == 0) return current;
+            current = header.NextPageId;
+        }
     }
 }

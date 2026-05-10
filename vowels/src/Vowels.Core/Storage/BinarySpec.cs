@@ -12,18 +12,20 @@ public static class BinarySpec
     {
         Header = 0,
         StringTable = 1,
-        SchemaRegistry = 2,
-        EntityData = 3,
-        Metadata = 4
+        Directory = 2,    // Was SchemaRegistry
+        SchemaChain = 3,  // Was EntityData
+        DataChain = 4,    // Was Metadata
+        BlobSpace = 5
     }
 
-    public enum HaType : byte
+    public enum VowelsType : byte
     {
         Double = 0x01,
-        Int32 = 0x02,
+        Int64 = 0x02,
         Boolean = 0x03,
         StringId = 0x04,
-        Blob = 0x05
+        Blob = 0x05,
+        Timestamp = 0x06
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -33,10 +35,8 @@ public static class BinarySpec
         public ushort Version;
         public byte DirtyBit;
         public long CreatedAt;
-        public uint ReservedPagesForNextHour;
-        public uint StringTablePageId;
-        public uint SchemaRegistryPageId;
-        public uint EntityCount; // Number of entries in the directory
+        public uint DirectoryHeadPageId; // System Entity 0
+        public uint StringTableHeadPageId;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -48,30 +48,44 @@ public static class BinarySpec
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct EntityPageHeader
+    public struct EntityDescriptor // Record in the Directory chain
     {
-        public uint EntityStringId; // Interned ID from StringTable
-        public ushort SchemaId;      // Interned ID from SchemaRegistry (2 bytes per spec)
-        public uint PreviousEntityPageId;
+        public uint EntityIdStringId; // e.g. sensor.temperature
+        public uint SchemaHeadPageId; // Pointer to first page of Schema chain
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct EntityDirectoryEntry
+    public struct SchemaEntryHeader // Variable-length record in Schema chain
     {
-        public uint EntityStringId;
-        public uint FirstPageId;
-        public uint LastPageId;
-        public ushort CurrentSchemaId;
-        public uint ReservedPages; // Self-tuning hint
+        public long StartTime;
+        public uint FirstDataPageId;
+        public VowelsType StateType;
+        public byte AttrCount;
     }
 
-    public static int GetHaTypeSize(HaType type) => type switch
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct AttributeDefinition
     {
-        HaType.Double => 8,
-        HaType.Int32 => 4,
-        HaType.Boolean => 1,
-        HaType.StringId => 4,
-        HaType.Blob => 8,
+        public uint NameStringId;
+        public VowelsType Type;
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct BlobPointer
+    {
+        public uint PageId;
+        public ushort Offset;
+        public ushort Length;
+    }
+
+    public static int GetTypeSize(VowelsType type) => type switch
+    {
+        VowelsType.Double => 8,
+        VowelsType.Int64 => 8,
+        VowelsType.Boolean => 1,
+        VowelsType.StringId => 4,
+        VowelsType.Blob => 8, // Size of BlobPointer
+        VowelsType.Timestamp => 8,
         _ => 0
     };
 }

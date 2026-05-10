@@ -15,7 +15,8 @@ To support sub-second writes and zero-latency shared memory access for the UI, V
 
 ### 3.1 File Layout
 *   **Page Size**: 4KB fixed.
-*   **Unified Format**: Every file is a collection of 4KB pages.
+*   **Unified Format**: Every file is a collection of 4KB pages. Every entity (including the Directory itself) is represented as a linked chain of pages.
+*   **Uniform Directory**: The Directory is "System Entity 0". It uses the same page-chain logic as data entities.
 *   **Page Header**: Every page (except Page 0) starts with:
     *   `NextPageID` (4 bytes): Index of the next page in the stream (0 if last).
     *   `DataOffset` (2 bytes): Start of records within the page.
@@ -24,11 +25,13 @@ To support sub-second writes and zero-latency shared memory access for the UI, V
 The first page contains the "Source of Truth" registries:
 *   **Metadata**: `Magic` (4 bytes), `Version` (2 bytes), `DirtyBit` (1 byte).
 *   **Registries**:
-    *   **String Table**: A deduplicated pool of all unique strings (Entity Names, Attribute Names, and recurring string values). Stored as `[Length (2 bytes), UTF8Bytes]`.
-    *   **Schema Registry**: Definitions of all entity layouts used in the file.
-        *   Format: `[SchemaID (2), StateType (1), AttrCount (1), {AttrNameID (4), Type (1)}[]]`
-    *   **Entity Directory**: Maps `EntityID` to its data stream.
-        *   Format: `[EntityNameID (4), FirstPage (4), LastPage (4), CurrentSchemaID (2)]`.
+    *   **String Table**: A deduplicated pool of all unique strings. Stored as `[Length (2 bytes), UTF8Bytes]`.
+    *   **Schema Registry (Chained)**: Definitions of entity layouts. 
+        *   Each entity points to its first `SchemaEntry`.
+        *   `SchemaEntry`: `[StartTime (8), FirstDataPageID (4), NextSchemaEntryID (4), AttrCount (1), {AttrNameID (4), Type (1)}[]]`.
+        *   Switching schemas forces a page break in the data chain, ensuring page purity.
+    *   **Entity Directory (System Entity 0)**: Maps `EntityID` to its first schema entry.
+        *   Format: `[EntityNameID (4), FirstSchemaEntryID (4)]`.
 
 ### 3.3 Record Format & Type System
 Records are stored sequentially in entity-specific linked pages.
