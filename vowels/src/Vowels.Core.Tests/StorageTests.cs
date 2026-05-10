@@ -17,7 +17,7 @@ public class StorageTests
         {
             // Act
             uint p0 = manager.AllocatePage(BinarySpec.PageType.Header);
-            uint p1 = manager.AllocatePage(BinarySpec.PageType.EntityData);
+            uint p1 = manager.AllocatePage(BinarySpec.PageType.SchemaChain);
             
             // Assert
             Assert.Equal(0u, p0);
@@ -36,7 +36,7 @@ public class StorageTests
                 fixed (byte* ptr1 = span1)
                 {
                     var header1 = (BinarySpec.PageHeader*)ptr1;
-                    Assert.Equal(BinarySpec.PageType.EntityData, header1->Type);
+                    Assert.Equal(BinarySpec.PageType.SchemaChain, header1->Type);
                 }
             }
         }
@@ -57,8 +57,8 @@ public class StorageTests
         {
             // Act
             manager.AllocatePage(BinarySpec.PageType.Header); // Page 0
-            manager.AllocatePage(BinarySpec.PageType.EntityData); // Page 1
-            uint p2 = manager.AllocatePage(BinarySpec.PageType.EntityData); // Page 2 -> Should trigger growth
+            manager.AllocatePage(BinarySpec.PageType.SchemaChain); // Page 1
+            uint p2 = manager.AllocatePage(BinarySpec.PageType.SchemaChain); // Page 2 -> Should trigger growth
             
             // Assert
             Assert.Equal(2u, p2);
@@ -78,31 +78,37 @@ public class StorageTests
         using (var manager = new PagedMmfManager(testFile, 8192))
         {
             var store = new EntityStore(manager);
-            var data = new byte[] { 1, 2, 3, 4 };
             
-            // 1. Record with Schema 1
-            store.RecordState(101, 1, 255, 1000, data);
+            // 1. Initial Schema
+            var attrs1 = new[] { new BinarySpec.AttributeDefinition { NameStringId = 1, Type = BinarySpec.VowelsType.Double } };
+            store.SwitchSchema(101, new DateTime(2026, 5, 10, 0, 0, 0), BinarySpec.VowelsType.Double, attrs1);
             
-            // 2. Record with Schema 2 (Switch)
-            store.RecordState(101, 2, 255, 2000, data);
+            // 2. Record data for Schema 1
+            var recordAttrs = new Dictionary<uint, object> { { 1, 23.5 } };
+            store.RecordState(101, new DateTime(2026, 5, 10, 0, 1, 0), 20.0, recordAttrs);
 
-            var span = manager.GetPageSpan(1); // Page 1 is the first data page
-            // Find the marker, skip headers (17 bytes)
-            bool foundMarker = false;
-            for (int i = 17; i < span.Length - 7; i++)
-            {
-                if (System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(span.Slice(i, 4)) == uint.MaxValue)
-                {
-                    foundMarker = true;
-                    Assert.Equal(0x01, span[i + 4]); // MetaType
-                    // Next 2 bytes should be the new Schema ID (2)
-                    Assert.Equal(2, System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(span.Slice(i + 5, 2)));
-                    break;
-                }
-            }
-            Assert.True(foundMarker);
+            // 3. Switch to Schema 2
+            var attrs2 = new[] { 
+                new BinarySpec.AttributeDefinition { NameStringId = 1, Type = BinarySpec.VowelsType.Double },
+                new BinarySpec.AttributeDefinition { NameStringId = 2, Type = BinarySpec.VowelsType.Int64 }
+            };
+            store.SwitchSchema(101, new DateTime(2026, 5, 10, 1, 0, 0), BinarySpec.VowelsType.Double, attrs2);
+
+            // 4. Record data for Schema 2
+            var recordAttrs2 = new Dictionary<uint, object> { { 1, 24.0 }, { 2, 100L } };
+            store.RecordState(101, new DateTime(2026, 5, 10, 1, 1, 0), 21.0, recordAttrs2);
+
+            // 5. Verify Lookup
+            var schema1 = store.GetActiveSchema(101, new DateTime(2026, 5, 10, 0, 30, 0));
+            Assert.NotNull(schema1);
+            Assert.Equal(1, schema1.Value.AttrCount);
+
+            var schema2 = store.GetActiveSchema(101, new DateTime(2026, 5, 10, 1, 30, 0));
+            Assert.NotNull(schema2);
+            Assert.Equal(2, schema2.Value.AttrCount);
         }
 
         if (File.Exists(testFile)) File.Delete(testFile);
     }
 }
+

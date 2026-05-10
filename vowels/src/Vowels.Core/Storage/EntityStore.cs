@@ -1,13 +1,22 @@
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Vowels.Core.Storage;
 
-public class EntityStore
+/// <summary>
+/// Provides a paged storage engine for managing entity metadata, schema versions, and state history.
+/// </summary>
+public partial class EntityStore
 {
     private readonly IPageManager _pageManager;
+    private readonly StringTable _stringTable;
     private readonly Dictionary<uint, uint> _entityToSchemaHead = new();
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="EntityStore"/> class.
+    /// </summary>
+    /// <param name="pageManager">The page manager used to interact with the underlying storage.</param>
     public EntityStore(IPageManager pageManager)
     {
         _pageManager = pageManager;
@@ -15,10 +24,14 @@ public class EntityStore
         {
             InitializeFile();
         }
-        else
-        {
-            LoadDirectory();
-        }
+        
+        // Load file header to get roots
+        var headerSpan = _pageManager.GetPageSpan(0);
+        var header = MemoryMarshal.Read<BinarySpec.FileHeader>(headerSpan);
+        
+        _stringTable = new StringTable(_pageManager, header.StringTableHeadPageId);
+        
+        LoadDirectory();
     }
 
     private void InitializeFile()
@@ -30,7 +43,7 @@ public class EntityStore
         uint stringTableId = _pageManager.AllocatePage(BinarySpec.PageType.StringTable);
         InitializePage(stringTableId, BinarySpec.PageType.StringTable);
 
-        // Allocate Directory Head (System Entity 0)
+        // Allocate Directory Head
         uint directoryId = _pageManager.AllocatePage(BinarySpec.PageType.Directory);
         InitializePage(directoryId, BinarySpec.PageType.Directory);
 
@@ -45,7 +58,7 @@ public class EntityStore
             StringTableHeadPageId = stringTableId
         };
         
-        MemoryMarshal.Write(span, ref header);
+        MemoryMarshal.Write(span, in header);
     }
 
     private void InitializePage(uint pageId, BinarySpec.PageType type)
@@ -57,7 +70,7 @@ public class EntityStore
             NextPageId = 0,
             DataOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>()
         };
-        MemoryMarshal.Write(span, ref header);
+        MemoryMarshal.Write(span, in header);
     }
 
     private void LoadDirectory()
@@ -85,11 +98,24 @@ public class EntityStore
         }
     }
 
-    public uint GetOrCreateSchemaChain(uint entityIdStringId)
+    /// <summary>
+    /// Gets or adds a string to the internal string table.
+    /// </summary>
+    internal uint GetOrAddString(string value) => _stringTable.GetOrAdd(value);
+
+    /// <summary>
+    /// Gets a string from the internal string table by its ID.
+    /// </summary>
+    internal string? GetString(uint id) => _stringTable.GetString(id);
+
+    /// <summary>
+    /// Gets or creates a schema chain for a given entity.
+    /// </summary>
+    internal (uint PageId, ushort Offset) GetOrCreateSchemaChain(uint entityIdStringId)
     {
         if (_entityToSchemaHead.TryGetValue(entityIdStringId, out uint schemaHeadId))
         {
-            return schemaHeadId;
+            return (schemaHeadId, (ushort)Marshal.SizeOf<BinarySpec.PageHeader>());
         }
 
         // Create new schema chain
@@ -100,7 +126,128 @@ public class EntityStore
         AppendToDirectory(entityIdStringId, schemaHeadId);
         
         _entityToSchemaHead[entityIdStringId] = schemaHeadId;
-        return schemaHeadId;
+        return (schemaHeadId, (ushort)Marshal.SizeOf<BinarySpec.PageHeader>());
+    }
+
+    /// <summary>
+    /// Switches the schema for an entity at a specific point in time.
+    /// </summary>
+    public void SwitchSchema(uint entityId, DateTime startTime, BinarySpec.VowelsType stateType, ReadOnlySpan<BinarySpec.AttributeDefinition> attributes)
+    {
+        var (headId, _) = GetOrCreateSchemaChain(entityId);
+        var lastLoc = FindLastSchemaEntry(headId);
+
+        var header = new BinarySpec.SchemaEntryHeader
+        {
+            StartTime = ((DateTimeOffset)startTime).ToUnixTimeSeconds(),
+            StateType = stateType,
+            AttrCount = (byte)attributes.Length,
+            FirstDataPageId = _pageManager.AllocatePage(BinarySpec.PageType.DataChain)
+        };
+        InitializePage(header.FirstDataPageId, BinarySpec.PageType.DataChain);
+
+        var newLoc = AddSchemaEntry(headId, header, attributes);
+
+        if (lastLoc.PageId != 0)
+        {
+            var span = _pageManager.GetPageSpan(lastLoc.PageId);
+            ref var prevHeader = ref MemoryMarshal.AsRef<BinarySpec.SchemaEntryHeader>(span.Slice(lastLoc.Offset));
+            prevHeader.NextSchemaEntryPageId = newLoc.PageId;
+            prevHeader.NextSchemaEntryOffset = newLoc.Offset;
+        }
+    }
+
+    /// <summary>
+    /// Gets the active schema for an entity at a given point in time.
+    /// </summary>
+    internal BinarySpec.SchemaEntryHeader? GetActiveSchema(uint entityId, DateTime time)
+    {
+        if (!_entityToSchemaHead.TryGetValue(entityId, out uint currentPageId)) return null;
+        
+        long targetTime = ((DateTimeOffset)time).ToUnixTimeSeconds();
+        ushort currentOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>();
+        
+        BinarySpec.SchemaEntryHeader? bestMatch = null;
+
+        while (currentPageId != 0)
+        {
+            var span = _pageManager.GetPageSpan(currentPageId);
+            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span.Slice(currentOffset));
+
+            if (entryHeader.StartTime <= targetTime)
+            {
+                bestMatch = entryHeader;
+                if (entryHeader.NextSchemaEntryPageId == 0) break;
+
+                currentPageId = entryHeader.NextSchemaEntryPageId;
+                currentOffset = entryHeader.NextSchemaEntryOffset;
+            }
+            else break;
+        }
+
+        return bestMatch;
+    }
+
+    private (uint PageId, ushort Offset) FindLastSchemaEntry(uint headId)
+    {
+        uint currentPageId = headId;
+        ushort currentOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>();
+        (uint PageId, ushort Offset) lastLoc = (0, 0);
+
+        while (currentPageId != 0)
+        {
+            var span = _pageManager.GetPageSpan(currentPageId);
+            var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(span);
+            
+            if (pageHeader.DataOffset <= currentOffset) break;
+
+            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span.Slice(currentOffset));
+            lastLoc = (currentPageId, currentOffset);
+
+            if (entryHeader.NextSchemaEntryPageId == 0) break;
+
+            currentPageId = entryHeader.NextSchemaEntryPageId;
+            currentOffset = entryHeader.NextSchemaEntryOffset;
+        }
+
+        return lastLoc;
+    }
+
+    private (uint PageId, ushort Offset) AddSchemaEntry(uint schemaChainHeadId, BinarySpec.SchemaEntryHeader header, ReadOnlySpan<BinarySpec.AttributeDefinition> attributes)
+    {
+        uint lastPageId = GetLastPageInChain(schemaChainHeadId);
+        var lastPageSpan = _pageManager.GetPageSpan(lastPageId);
+        var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
+
+        int recordSize = Marshal.SizeOf<BinarySpec.SchemaEntryHeader>() + (attributes.Length * Marshal.SizeOf<BinarySpec.AttributeDefinition>());
+        
+        if (pageHeader.DataOffset + recordSize > BinarySpec.PageSize)
+        {
+            lastPageId = _pageManager.AllocatePage(BinarySpec.PageType.SchemaChain);
+            InitializePage(lastPageId, BinarySpec.PageType.SchemaChain);
+            
+            pageHeader.NextPageId = lastPageId;
+            MemoryMarshal.Write(lastPageSpan, in pageHeader);
+            
+            lastPageSpan = _pageManager.GetPageSpan(lastPageId);
+            pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
+        }
+
+        ushort writeOffset = pageHeader.DataOffset;
+        MemoryMarshal.Write(lastPageSpan.Slice(writeOffset), in header);
+        int attrOffset = writeOffset + Marshal.SizeOf<BinarySpec.SchemaEntryHeader>();
+        
+        for (int i = 0; i < attributes.Length; i++)
+        {
+            var attr = attributes[i];
+            MemoryMarshal.Write(lastPageSpan.Slice(attrOffset), in attr);
+            attrOffset += Marshal.SizeOf<BinarySpec.AttributeDefinition>();
+        }
+
+        pageHeader.DataOffset = (ushort)attrOffset;
+        MemoryMarshal.Write(lastPageSpan, in pageHeader);
+
+        return (lastPageId, writeOffset);
     }
 
     private void AppendToDirectory(uint entityId, uint schemaHeadId)
@@ -119,17 +266,15 @@ public class EntityStore
             int recordSize = Marshal.SizeOf<BinarySpec.EntityDescriptor>();
             if (pageHeader.DataOffset + recordSize <= BinarySpec.PageSize)
             {
-                // Found space
                 var descriptor = new BinarySpec.EntityDescriptor 
                 { 
                     EntityIdStringId = entityId, 
                     SchemaHeadPageId = schemaHeadId 
                 };
-                MemoryMarshal.Write(pageSpan.Slice(pageHeader.DataOffset), ref descriptor);
+                MemoryMarshal.Write(pageSpan.Slice(pageHeader.DataOffset), in descriptor);
                 
-                // Update offset
                 pageHeader.DataOffset += (ushort)recordSize;
-                MemoryMarshal.Write(pageSpan, ref pageHeader);
+                MemoryMarshal.Write(pageSpan, in pageHeader);
                 return;
             }
             
@@ -137,58 +282,138 @@ public class EntityStore
             currentPageId = pageHeader.NextPageId;
         }
         
-        // No space, allocate new directory page
         uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.Directory);
         InitializePage(newPageId, BinarySpec.PageType.Directory);
         
-        // Link from previous
         var lastSpan = _pageManager.GetPageSpan(lastPageId);
         var lastHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastSpan);
         lastHeader.NextPageId = newPageId;
-        MemoryMarshal.Write(lastSpan, ref lastHeader);
+        MemoryMarshal.Write(lastSpan, in lastHeader);
         
-        // Write to new page
         AppendToDirectory(entityId, schemaHeadId);
     }
 
-    public void AddSchemaEntry(uint schemaChainHeadId, BinarySpec.SchemaEntryHeader header, ReadOnlySpan<BinarySpec.AttributeDefinition> attributes)
+    /// <summary>
+    /// Records the state and attributes for an entity at a given time.
+    /// </summary>
+    public void RecordState(uint entityId, DateTime time, object state, IReadOnlyDictionary<uint, object> attributes)
     {
-        uint lastPageId = GetLastPageInChain(schemaChainHeadId);
+        var schemaInfo = GetActiveSchemaFull(entityId, time);
+        if (schemaInfo == null)
+        {
+            throw new InvalidOperationException($"No active schema for entity {entityId} at {time}");
+        }
+
+        AppendToDataChain(schemaInfo.Value.Header, schemaInfo.Value.Attributes, time, state, attributes);
+    }
+
+    /// <summary>
+    /// Gets the full active schema details for an entity at a given point in time.
+    /// </summary>
+    internal (BinarySpec.SchemaEntryHeader Header, BinarySpec.AttributeDefinition[] Attributes)? GetActiveSchemaFull(uint entityId, DateTime time)
+    {
+        if (!_entityToSchemaHead.TryGetValue(entityId, out uint currentPageId)) return null;
+        
+        long targetTime = ((DateTimeOffset)time).ToUnixTimeSeconds();
+        ushort currentOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>();
+        
+        BinarySpec.SchemaEntryHeader? bestMatchHeader = null;
+        (uint PageId, ushort Offset) bestLoc = (0, 0);
+
+        while (currentPageId != 0)
+        {
+            var span = _pageManager.GetPageSpan(currentPageId);
+            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span.Slice(currentOffset));
+
+            if (entryHeader.StartTime <= targetTime)
+            {
+                bestMatchHeader = entryHeader;
+                bestLoc = (currentPageId, currentOffset);
+                
+                if (entryHeader.NextSchemaEntryPageId == 0) break;
+
+                currentPageId = entryHeader.NextSchemaEntryPageId;
+                currentOffset = entryHeader.NextSchemaEntryOffset;
+            }
+            else break;
+        }
+
+        if (bestMatchHeader == null) return null;
+
+        var bestSpan = _pageManager.GetPageSpan(bestLoc.PageId);
+        int attrOffset = bestLoc.Offset + Marshal.SizeOf<BinarySpec.SchemaEntryHeader>();
+        var bestMatchAttrs = new BinarySpec.AttributeDefinition[bestMatchHeader.Value.AttrCount];
+        for (int i = 0; i < bestMatchAttrs.Length; i++)
+        {
+            bestMatchAttrs[i] = MemoryMarshal.Read<BinarySpec.AttributeDefinition>(bestSpan.Slice(attrOffset));
+            attrOffset += Marshal.SizeOf<BinarySpec.AttributeDefinition>();
+        }
+
+        return (bestMatchHeader.Value, bestMatchAttrs);
+    }
+
+    private void AppendToDataChain(BinarySpec.SchemaEntryHeader schema, BinarySpec.AttributeDefinition[] attrDefs, DateTime time, object state, IReadOnlyDictionary<uint, object> attributes)
+    {
+        uint lastPageId = GetLastPageInChain(schema.FirstDataPageId);
         var lastPageSpan = _pageManager.GetPageSpan(lastPageId);
         var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
 
-        int recordSize = Marshal.SizeOf<BinarySpec.SchemaEntryHeader>() + (attributes.Length * Marshal.SizeOf<BinarySpec.AttributeDefinition>());
-        
+        int recordSize = 8 + BinarySpec.GetTypeSize(schema.StateType);
+        foreach (var attr in attrDefs) recordSize += BinarySpec.GetTypeSize(attr.Type);
+
         if (pageHeader.DataOffset + recordSize > BinarySpec.PageSize)
         {
-            // Allocate new page in schema chain
-            uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.SchemaChain);
-            InitializePage(newPageId, BinarySpec.PageType.SchemaChain);
+            uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.DataChain);
+            InitializePage(newPageId, BinarySpec.PageType.DataChain);
             
-            // Link
             pageHeader.NextPageId = newPageId;
-            MemoryMarshal.Write(lastPageSpan, ref pageHeader);
+            MemoryMarshal.Write(lastPageSpan, in pageHeader);
             
             lastPageId = newPageId;
             lastPageSpan = _pageManager.GetPageSpan(lastPageId);
             pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
         }
 
-        // Write Header
-        MemoryMarshal.Write(lastPageSpan.Slice(pageHeader.DataOffset), ref header);
-        int offset = pageHeader.DataOffset + Marshal.SizeOf<BinarySpec.SchemaEntryHeader>();
-        
-        // Write Attributes
-        for (int i = 0; i < attributes.Length; i++)
+        int writeOffset = pageHeader.DataOffset;
+        BinaryPrimitives.WriteInt64LittleEndian(lastPageSpan.Slice(writeOffset), ((DateTimeOffset)time).ToUnixTimeSeconds());
+        writeOffset += 8;
+
+        WriteValue(lastPageSpan.Slice(writeOffset), schema.StateType, state);
+        writeOffset += BinarySpec.GetTypeSize(schema.StateType);
+
+        foreach (var attrDef in attrDefs)
         {
-            var attr = attributes[i];
-            MemoryMarshal.Write(lastPageSpan.Slice(offset), ref attr);
-            offset += Marshal.SizeOf<BinarySpec.AttributeDefinition>();
+            if (attributes.TryGetValue(attrDef.NameStringId, out var val))
+            {
+                WriteValue(lastPageSpan.Slice(writeOffset), attrDef.Type, val);
+            }
+            writeOffset += BinarySpec.GetTypeSize(attrDef.Type);
         }
 
-        // Update Page Offset
-        pageHeader.DataOffset = (ushort)offset;
-        MemoryMarshal.Write(lastPageSpan, ref pageHeader);
+        pageHeader.DataOffset = (ushort)writeOffset;
+        MemoryMarshal.Write(lastPageSpan, in pageHeader);
+    }
+
+    private void WriteValue(Span<byte> span, BinarySpec.VowelsType type, object value)
+    {
+        switch (type)
+        {
+            case BinarySpec.VowelsType.Double:
+                BinaryPrimitives.WriteDoubleLittleEndian(span, (double)value);
+                break;
+            case BinarySpec.VowelsType.Int64:
+                BinaryPrimitives.WriteInt64LittleEndian(span, (long)value);
+                break;
+            case BinarySpec.VowelsType.Boolean:
+                span[0] = (bool)value ? (byte)1 : (byte)0;
+                break;
+            case BinarySpec.VowelsType.StringId:
+                BinaryPrimitives.WriteUInt32LittleEndian(span, (uint)value);
+                break;
+            case BinarySpec.VowelsType.Timestamp:
+                BinaryPrimitives.WriteInt64LittleEndian(span, ((DateTimeOffset)value).ToUnixTimeSeconds());
+                break;
+        }
     }
 
     private uint GetLastPageInChain(uint headPageId)

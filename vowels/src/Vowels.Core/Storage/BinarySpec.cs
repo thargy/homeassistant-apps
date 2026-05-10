@@ -2,6 +2,9 @@ using System.Runtime.InteropServices;
 
 namespace Vowels.Core.Storage;
 
+/// <summary>
+/// Defines the binary layout and constants for the Vowels storage format.
+/// </summary>
 public static class BinarySpec
 {
     public const int PageSize = 4096;
@@ -12,9 +15,9 @@ public static class BinarySpec
     {
         Header = 0,
         StringTable = 1,
-        Directory = 2,    // Was SchemaRegistry
-        SchemaChain = 3,  // Was EntityData
-        DataChain = 4,    // Was Metadata
+        Directory = 2,
+        SchemaChain = 3,
+        DataChain = 4,
         BlobSpace = 5
     }
 
@@ -35,7 +38,7 @@ public static class BinarySpec
         public ushort Version;
         public byte DirtyBit;
         public long CreatedAt;
-        public uint SystemEntity0HeadPageId; // The Global Directory
+        public uint DirectoryHeadPageId;
         public uint StringTableHeadPageId;
     }
 
@@ -44,7 +47,7 @@ public static class BinarySpec
     {
         public PageType Type;
         public uint NextPageId;
-        public ushort DataOffset; // Design doc 3.1 says DataOffset (2 bytes)
+        public ushort DataOffset;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

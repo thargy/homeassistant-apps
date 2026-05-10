@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Vowels.Core.Models;
 using YamlDotNet.Serialization;
@@ -9,14 +10,35 @@ public class ConfigLoader
 {
     private readonly IDeserializer _yamlDeserializer;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ConfigLoader"/> class using AOT-compatible static deserializers.
+    /// </summary>
     public ConfigLoader()
     {
-        _yamlDeserializer = new DeserializerBuilder()
-            .WithNamingConvention(UnderscoredNamingConvention.Instance)
-            .IgnoreUnmatchedProperties()
-            .Build();
+        // Check if dynamic code (reflection) is supported. 
+        // In Native AOT, this returns false.
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+        {
+            _yamlDeserializer = new StaticDeserializerBuilder(new VowelsYamlContext())
+                .IgnoreUnmatchedProperties()
+                .Build();
+        }
+        else
+        {
+            // Fallback for development/test environments (non-AOT).
+            _yamlDeserializer = new DeserializerBuilder()
+                .WithNamingConvention(UnderscoredNamingConvention.Instance)
+                .IgnoreUnmatchedProperties()
+                .Build();
+        }
     }
 
+    /// <summary>
+    /// Loads the Vowels configuration from YAML and JSON sources, with JSON overriding YAML.
+    /// </summary>
+    /// <param name="yamlPath">Path to the YAML configuration file.</param>
+    /// <param name="jsonPath">Path to the JSON configuration file (Supervisor options).</param>
+    /// <returns>A merged <see cref="VowelsConfig"/> instance.</returns>
     public VowelsConfig Load(string? yamlPath = null, string? jsonPath = null)
     {
         VowelsConfig config = new();
