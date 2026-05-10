@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using Vowels.Core.Common;
 
 namespace Vowels.Core.Storage;
 
@@ -154,7 +155,7 @@ public partial class EntityStore
     /// <summary>
     /// Switches the schema for an entity at a specific point in time.
     /// </summary>
-    public void SwitchSchema(uint entityId, DateTime startTime, BinarySpec.VowelsType stateType, ReadOnlySpan<BinarySpec.AttributeDefinition> attributes)
+    public void SwitchSchema(uint entityId, DateTime startTime, VowelsType stateType, ReadOnlySpan<BinarySpec.AttributeDefinition> attributes)
     {
         var (headId, _) = GetOrCreateSchemaChain(entityId);
         var lastLoc = FindLastSchemaEntry(headId);
@@ -416,23 +417,23 @@ public partial class EntityStore
         MemoryMarshal.Write(lastPageSpan, in pageHeader);
     }
 
-    private void WriteValue(Span<byte> span, BinarySpec.VowelsType type, object value)
+    private void WriteValue(Span<byte> span, VowelsType type, object value)
     {
         switch (type)
         {
-            case BinarySpec.VowelsType.Double:
+            case VowelsType.Double:
                 BinaryPrimitives.WriteDoubleLittleEndian(span, (double)value);
                 break;
-            case BinarySpec.VowelsType.Int64:
+            case VowelsType.Int64:
                 BinaryPrimitives.WriteInt64LittleEndian(span, (long)value);
                 break;
-            case BinarySpec.VowelsType.Boolean:
+            case VowelsType.Boolean:
                 span[0] = (bool)value ? (byte)1 : (byte)0;
                 break;
-            case BinarySpec.VowelsType.StringId:
+            case VowelsType.StringId:
                 BinaryPrimitives.WriteUInt32LittleEndian(span, (uint)value);
                 break;
-            case BinarySpec.VowelsType.Timestamp:
+            case VowelsType.Timestamp:
                 BinaryPrimitives.WriteInt64LittleEndian(span, ((DateTimeOffset)value).ToUnixTimeSeconds());
                 break;
         }

@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using Vowels.Core.Common;
 
 namespace Vowels.Core.Storage;
 
@@ -21,15 +22,6 @@ public static class BinarySpec
         BlobSpace = 5
     }
 
-    public enum VowelsType : byte
-    {
-        Double = 0x01,
-        Int64 = 0x02,
-        Boolean = 0x03,
-        StringId = 0x04,
-        Blob = 0x05,
-        Timestamp = 0x06
-    }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct FileHeader
