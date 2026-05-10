@@ -1,0 +1,6 @@
+@Vowels.UI_HostAddress = http://localhost:5278
+
+GET {{Vowels.UI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

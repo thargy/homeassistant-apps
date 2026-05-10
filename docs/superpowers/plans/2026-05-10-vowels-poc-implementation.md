@@ -37,7 +37,7 @@
 ## Phase 1: Scaffolding & Configuration
 
 ### Task 1: Initialize .NET 10 Solution
-- [ ] **Step 1: Create solution and projects**
+- [x] **Step 1: Create solution and projects**
 Run:
 ```bash
 dotnet new sln -n Vowels
@@ -46,7 +46,7 @@ dotnet new classlib -n Vowels.Core
 dotnet new webapi -n Vowels.UI --use-program-main
 dotnet sln add Vowels.Daemon Vowels.Core Vowels.UI
 ```
-- [ ] **Step 2: Configure Native AOT**
+- [x] **Step 2: Configure Native AOT**
 Modify `Vowels.Daemon/Vowels.Daemon.csproj`:
 ```xml
 <PropertyGroup>
@@ -58,9 +58,9 @@ Modify `Vowels.Daemon/Vowels.Daemon.csproj`:
 `git add . && git commit -m "chore: scaffold .NET 10 AOT solution"`
 
 ### Task 2: Implement Config Loader
-- [ ] **Step 1: Write tests for YAML/JSON merging**
+- [x] **Step 1: Write tests for YAML/JSON merging**
 File: `Vowels.Core.Tests/ConfigTests.cs`
-- [ ] **Step 2: Implement ConfigLoader using SourceGen JSON**
+- [x] **Step 2: Implement ConfigLoader using SourceGen JSON**
 File: `Vowels.Daemon/Services/ConfigLoader.cs`
 - [ ] **Step 3: Commit**
 `git commit -m "feat: implement AOT-compatible config loading"`
@@ -70,18 +70,18 @@ File: `Vowels.Daemon/Services/ConfigLoader.cs`
 ## Phase 2: MMF Storage Engine (The "Heart")
 
 ### Task 3: Binary Specification & Page Manager
-- [ ] **Step 1: Define blittable structs for Header and PageHeader**
+- [x] **Step 1: Define blittable structs for Header and PageHeader**
 File: `Vowels.Core/Storage/BinarySpec.cs`
-- [ ] **Step 2: Implement PagedMmfManager with basic page allocation**
-- [ ] **Step 3: Write tests for page linking and data offset calculation**
-- [ ] **Step 4: Commit**
+- [x] **Step 2: Implement PagedMmfManager with basic page allocation**
+- [x] **Step 3: Write tests for page linking and data offset calculation**
+- [x] **Step 4: Commit**
 `git commit -m "feat: implement paged MMF manager and binary specs"`
 
 ### Task 4: String Table & Schema Registry
-- [ ] **Step 1: Implement StringTable with ID-based lookup**
-- [ ] **Step 2: Implement SchemaRegistry for layout definitions**
-- [ ] **Step 3: Test schema switching via Metadata Marker (0xFFFFFFFF)**
-- [ ] **Step 4: Commit**
+- [x] **Step 1: Implement StringTable with ID-based lookup**
+- [x] **Step 2: Implement SchemaRegistry for layout definitions**
+- [x] **Step 3: Test schema switching via Metadata Marker (0xFFFFFFFF)**
+- [x] **Step 4: Commit**
 `git commit -m "feat: implement string interning and schema registry"`
 
 ---

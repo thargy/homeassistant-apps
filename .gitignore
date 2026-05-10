@@ -65,3 +65,11 @@ vowels/rootfs/data/*
 
 # Personal Home Audits (Not for public repo)
 docs/vowels/personal/
+
+# .NET Build Artifacts
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates

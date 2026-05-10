@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Vowels.Core.Tests/Vowels.Core.Tests.csproj" />
+  <Project Path="Vowels.Core/Vowels.Core.csproj" />
+  <Project Path="Vowels.Daemon/Vowels.Daemon.csproj" />
+  <Project Path="Vowels.UI/Vowels.UI.csproj" />
+</Solution>
