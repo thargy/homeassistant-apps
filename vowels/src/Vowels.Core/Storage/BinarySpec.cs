@@ -35,7 +35,7 @@ public static class BinarySpec
         public ushort Version;
         public byte DirtyBit;
         public long CreatedAt;
-        public uint DirectoryHeadPageId; // System Entity 0
+        public uint SystemEntity0HeadPageId; // The Global Directory
         public uint StringTableHeadPageId;
     }
 
@@ -59,6 +59,8 @@ public static class BinarySpec
     {
         public long StartTime;
         public uint FirstDataPageId;
+        public uint NextSchemaEntryPageId;   // Explicit link to next version
+        public ushort NextSchemaEntryOffset; // Explicit link to next version
         public VowelsType StateType;
         public byte AttrCount;
     }
