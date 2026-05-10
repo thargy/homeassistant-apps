@@ -1,12 +1,12 @@
 using System.Runtime.InteropServices;
 using Vowels.Core.Common;
 
-namespace Vowels.Core.Storage;
+namespace Vowels.FileStoreRegistry.Storage;
 
 /// <summary>
 /// Defines the binary layout and constants for the Vowels storage format.
 /// </summary>
-public static class BinarySpec
+internal static class BinarySpec
 {
     public const int PageSize = 4096;
     public const uint InvalidPageId = uint.MaxValue;
@@ -21,7 +21,6 @@ public static class BinarySpec
         DataChain = 4,
         BlobSpace = 5
     }
-
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     public struct FileHeader

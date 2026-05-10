@@ -22,6 +22,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Vowels.Core\Vowels.Core.csproj" />
     <ProjectReference Include="..\Vowels.Daemon\Vowels.Daemon.csproj" />
+    <ProjectReference Include="..\Vowels.FileStoreRegistry\Vowels.FileStoreRegistry.csproj" />
   </ItemGroup>
 
 </Project>

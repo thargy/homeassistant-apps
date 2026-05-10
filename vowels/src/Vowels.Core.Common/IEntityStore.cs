@@ -1,6 +1,6 @@
 namespace Vowels.Core.Common;
 
-public interface IStoreRegistry
+public interface IEntityStore
 {
     IObservable<EntityValue> GetValues(IEnumerable<IHandle> handles, DateTime start, DateTime end);
     IObservable<EntityValue> SaveValues(IObservable<EntityValue> values);

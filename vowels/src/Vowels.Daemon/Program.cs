@@ -1,7 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Vowels.Core.Common;
 using Vowels.Core.Registry;
-using Vowels.Core.Storage;
+using Vowels.FileStoreRegistry;
 using Vowels.Daemon.Services;
 
 namespace Vowels.Daemon;
@@ -18,13 +19,11 @@ class Program
 
         // 2. Storage Services (Singletons)
         // Manual initialization in dependency order
-        var pageManager = new PagedMmfManager("vowels_data.vowl", 1024 * 1024);
-        EntityStore.Initialize(pageManager);
-        EntityRegistry.Initialize(EntityStore.Instance);
+        var store = new FileStoreManager("vowels_data"); // Directory for hourly files
+        EntityRegistry.Initialize(store);
 
         // Register instances in DI for components that still use injection
-        builder.Services.AddSingleton<IPageManager>(pageManager);
-        builder.Services.AddSingleton(EntityStore.Instance);
+        builder.Services.AddSingleton<IEntityStore>(store);
         builder.Services.AddSingleton(EntityRegistry.Instance);
 
         // 3. Background Workers (To be implemented in Phase 3)
