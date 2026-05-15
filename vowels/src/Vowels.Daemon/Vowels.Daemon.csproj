@@ -3,7 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\Vowels.Core\Vowels.Core.csproj" />
     <ProjectReference Include="..\Vowels.FileStoreRegistry\Vowels.FileStoreRegistry.csproj" />
-    <ProjectReference Include="..\Vowels.Core.Common\Vowels.Core.Common.csproj" />
+    <ProjectReference Include="..\Vowels.Common\Vowels.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

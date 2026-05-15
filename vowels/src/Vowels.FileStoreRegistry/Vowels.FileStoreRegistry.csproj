@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\Vowels.Core.Common\Vowels.Core.Common.csproj" />
+    <ProjectReference Include="..\Vowels.Common\Vowels.Common.csproj" />
   </ItemGroup>
 
   <ItemGroup>

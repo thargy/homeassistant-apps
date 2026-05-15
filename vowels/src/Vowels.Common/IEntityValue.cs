@@ -1,4 +1,4 @@
-namespace Vowels.Core.Common;
+namespace Vowels.Common;
 
 public enum VowelsType : byte
 {

@@ -1,6 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using Vowels.Core.Common;
+using Vowels.Common;
 using Vowels.Core.Registry;
 using Vowels.FileStoreRegistry;
 using Vowels.Daemon.Services;

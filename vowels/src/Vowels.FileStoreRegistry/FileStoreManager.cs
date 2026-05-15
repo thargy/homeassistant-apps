@@ -4,7 +4,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Text.RegularExpressions;
 using System.Linq;
-using Vowels.Core.Common;
+using Vowels.Common;
 
 namespace Vowels.FileStoreRegistry;
 

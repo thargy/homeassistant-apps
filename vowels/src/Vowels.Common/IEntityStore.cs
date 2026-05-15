@@ -1,4 +1,4 @@
-namespace Vowels.Core.Common;
+namespace Vowels.Common;
 
 public interface IEntityStore
 {

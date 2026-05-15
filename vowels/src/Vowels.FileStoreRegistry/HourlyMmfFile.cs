@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Linq;
-using Vowels.Core.Common;
+using Vowels.Common;
 using Vowels.FileStoreRegistry.Storage;
 
 namespace Vowels.FileStoreRegistry;

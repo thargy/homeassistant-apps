@@ -1,5 +1,5 @@
 using System.Runtime.InteropServices;
-using Vowels.Core.Common;
+using Vowels.Common;
 
 namespace Vowels.FileStoreRegistry.Storage;
 

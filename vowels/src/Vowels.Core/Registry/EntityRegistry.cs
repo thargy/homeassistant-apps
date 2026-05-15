@@ -1,7 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
-using Vowels.Core.Common;
+using Vowels.Common;
 
 namespace Vowels.Core.Registry;
 

@@ -1,7 +1,7 @@
 using Xunit;
 using Vowels.Core.Registry;
 using Vowels.FileStoreRegistry;
-using Vowels.Core.Common;
+using Vowels.Common;
 using System.IO;
 
 namespace Vowels.Core.Tests;
