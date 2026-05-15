@@ -8,7 +8,9 @@ using Vowels.FileStoreRegistry.Storage;
 
 namespace Vowels.FileStoreRegistry;
 
-internal class HourlyMmfFile : IDisposable
+using Vowels.Common.Storage;
+
+internal class DataSegment : IDataWriter, IDisposable
 {
     private readonly IPageManager _pageManager;
     private readonly StringTable _stringTable;
@@ -20,8 +22,13 @@ internal class HourlyMmfFile : IDisposable
         return _entityToSchemaHead.Keys.Select(id => _stringTable.GetString(id)).Where(s => s != null)!;
     }
 
-    public HourlyMmfFile(string filePath)
+    private readonly DateTimeOffset _anchor;
+    private readonly TimeSpan _duration;
+
+    public DataSegment(string filePath, DateTimeOffset anchor, TimeSpan duration)
     {
+        _anchor = anchor;
+        _duration = duration;
         _pageManager = new PagedMmfManager(filePath);
         
         bool initialized = false;
@@ -101,6 +108,15 @@ internal class HourlyMmfFile : IDisposable
         }
     }
 
+    
+    public void SaveValues(IEnumerable<EntityValue> values)
+    {
+        foreach (var value in values)
+        {
+            AddValue(value.Handle.EntityId, value.Type, value.Value, value.Timestamp);
+        }
+    }
+
     public void AddValue(string entityId, VowelsType type, object value, DateTime timestamp)
     {
         uint id = _stringTable.GetOrAdd(entityId);
@@ -119,14 +135,23 @@ internal class HourlyMmfFile : IDisposable
         }
     }
 
-    public IEnumerable<EntityValue> GetValues(IEnumerable<IHandle> handles, DateTime startTime, DateTime endTime)
+    public IObservable<EntityValue> GetValues(IEnumerable<string> entityIds, DateTimeOffset start, DateTimeOffset end)
+    {
+        return System.Reactive.Linq.Observable.Create<EntityValue>(observer => {
+            foreach (var v in GetValuesInternal(entityIds, start, end)) { observer.OnNext(v); }
+            observer.OnCompleted();
+            return System.Reactive.Disposables.Disposable.Empty;
+        });
+    }
+
+    private IEnumerable<EntityValue> GetValuesInternal(IEnumerable<string> entityIds, DateTimeOffset startTime, DateTimeOffset endTime)
     {
         long startUnix = ((DateTimeOffset)startTime).ToUnixTimeSeconds();
         long endUnix = ((DateTimeOffset)endTime).ToUnixTimeSeconds();
 
-        foreach (var handle in handles)
+        foreach (var entityId in entityIds)
         {
-            uint entityIdStringId = _stringTable.GetId(handle.EntityId);
+            uint entityIdStringId = _stringTable.GetId(entityId);
             if (entityIdStringId == 0 || !_entityToSchemaHead.TryGetValue(entityIdStringId, out uint currentPageId)) continue;
             ushort currentOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>();
 
@@ -161,24 +186,8 @@ internal class HourlyMmfFile : IDisposable
 
                 if (entryHeader.StartTime < endUnix && nextSchemaStart > startUnix)
                 {
-                    // This schema is relevant. Determine if we are looking for a specific attribute or the state
-                    int? targetAttrIndex = null;
-                    if (handle is SensorAttributeHandle attrHandle)
-                    {
-                        uint attrNameId = _stringTable.GetId(attrHandle.AttributeName);
-                        if (attrNameId != 0)
-                        {
-                            for (int i = 0; i < attrs.Length; i++)
-                            {
-                                if (attrs[i].NameStringId == attrNameId)
-                                {
-                                    targetAttrIndex = i;
-                                    break;
-                                }
-                            }
-                        }
-                        if (targetAttrIndex == null) goto next_loop;
-                    }
+                    // Attribute filtering removed — DataSegment only exposes state values via entityId.
+                    // Per-attribute queries are not supported at this layer.
 
                     // Traverse data pages
                     uint dataPageId = entryHeader.FirstDataPageId;
@@ -202,31 +211,13 @@ internal class HourlyMmfFile : IDisposable
                                 if (ts >= startUnix && ts <= endUnix)
                                 {
                                     int valueOffset = offset;
-                                    if (targetAttrIndex.HasValue)
-                                    {
-                                        valueOffset += BinarySpec.GetTypeSize(entryHeader.StateType);
-                                        for (int i = 0; i < targetAttrIndex.Value; i++)
-                                        {
-                                            valueOffset += BinarySpec.GetTypeSize(attrs[i].Type);
-                                        }
-                                        pageValues.Add(new EntityValue(
-                                            handle,
-                                            DateTimeOffset.FromUnixTimeSeconds(ts).DateTime,
-                                            100,
-                                            attrs[targetAttrIndex.Value].Type,
-                                            ReadValue(dataSpan.Slice(valueOffset), attrs[targetAttrIndex.Value].Type)
-                                        ));
-                                    }
-                                    else
-                                    {
-                                        pageValues.Add(new EntityValue(
-                                            handle,
-                                            DateTimeOffset.FromUnixTimeSeconds(ts).DateTime,
-                                            100,
-                                            entryHeader.StateType,
-                                            ReadValue(dataSpan.Slice(valueOffset), entryHeader.StateType)
-                                        ));
-                                    }
+                                    pageValues.Add(new EntityValue(
+                                        new Vowels.Common.SensorHandle(entityId),
+                                        DateTimeOffset.FromUnixTimeSeconds(ts).DateTime,
+                                        100,
+                                        entryHeader.StateType,
+                                        ReadValue(dataSpan.Slice(valueOffset), entryHeader.StateType)
+                                    ));
                                 }
 
                                 offset = recordStart + 8 + BinarySpec.GetTypeSize(entryHeader.StateType);
@@ -239,7 +230,6 @@ internal class HourlyMmfFile : IDisposable
                     }
                 }
 
-                next_loop:
                 if (nextEntryPageId == 0) break;
                 currentPageId = nextEntryPageId;
                 currentOffset = nextEntryOffset;

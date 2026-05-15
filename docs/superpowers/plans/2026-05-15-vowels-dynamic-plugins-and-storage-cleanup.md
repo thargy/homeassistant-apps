@@ -134,10 +134,144 @@ git commit -m "feat: define IDataReader and IDataWriter interfaces"
 - Modify: `vowels/src/Vowels.FileStoreRegistry/FileStoreManager.cs`
 
 - [ ] **Step 1: Rename and Implement Interfaces**
-Update `DataSegment` to take `DateTimeOffset anchor` and `TimeSpan duration` in its constructor.
+Rename `HourlyMmfFile.cs` to `DataSegment.cs`.
+```bash
+mv vowels/src/Vowels.FileStoreRegistry/HourlyMmfFile.cs vowels/src/Vowels.FileStoreRegistry/DataSegment.cs
+```
+Update `DataSegment` constructor to take `DateTimeOffset anchor` and `TimeSpan duration`.
+```csharp
+// In vowels/src/Vowels.FileStoreRegistry/DataSegment.cs
+using Vowels.Common.Storage;
+
+namespace Vowels.FileStoreRegistry;
+
+internal class DataSegment : IDataWriter, IDisposable
+{
+    private readonly DateTimeOffset _anchor;
+    private readonly TimeSpan _duration;
+    // ... other fields remain the same
+
+    public DataSegment(string filePath, DateTimeOffset anchor, TimeSpan duration)
+    {
+        _anchor = anchor;
+        _duration = duration;
+        // ... existing init logic
+    }
+
+    public IEnumerable<string> GetKnownEntityIds() { /* existing logic */ }
+    
+    public IObservable<EntityValue> GetValues(IEnumerable<string> entityIds, DateTimeOffset start, DateTimeOffset end)
+    {
+        // ... existing GetValues logic, but filtering on entityIds instead of IHandle
+    }
+    
+    public void SaveValues(IEnumerable<EntityValue> values)
+    {
+        foreach (var value in values)
+        {
+            AddValue(value.Handle.EntityId, value.Type, value.Value, value.Timestamp);
+        }
+    }
+    
+    // ... existing AddValue and other logic
+}
+```
 
 - [ ] **Step 2: Update FileStoreManager**
-Refactor to manage a collection of `DataSegment` objects, calculating the correct file based on the `duration` rather than hardcoded 1-hour slots.
+Refactor to manage a collection of `DataSegment` objects, calculating the correct file based on the `duration` rather than hardcoded 1-hour slots. Update it to implement `IDataReader` and `IDataWriter`.
+
+```csharp
+// In vowels/src/Vowels.FileStoreRegistry/FileStoreManager.cs
+using Vowels.Common.Storage;
+
+namespace Vowels.FileStoreRegistry;
+
+public class FileStoreManager : IDataWriter, IDisposable
+{
+    private readonly string _storagePath;
+    private readonly TimeSpan _segmentDuration;
+    private readonly Dictionary<string, DataSegment> _openSegments = new();
+    private readonly object _lock = new();
+
+    public FileStoreManager(string storagePath, TimeSpan segmentDuration)
+    {
+        _storagePath = storagePath;
+        _segmentDuration = segmentDuration;
+        if (!Directory.Exists(_storagePath)) Directory.CreateDirectory(_storagePath);
+    }
+
+    public IEnumerable<string> GetKnownEntityIds()
+    {
+        var discovered = new HashSet<string>();
+        var files = Directory.GetFiles(_storagePath, "vowels_*.vowl");
+        foreach (var filePath in files)
+        {
+            try
+            {
+                // In a real scenario we'd parse the anchor from the filename, but for now we just pass dummy values to read the directory.
+                using var file = new DataSegment(filePath, DateTimeOffset.MinValue, _segmentDuration);
+                foreach (var id in file.GetKnownEntityIds()) discovered.Add(id);
+            }
+            catch { }
+        }
+        return discovered;
+    }
+
+    public IObservable<EntityValue> GetValues(IEnumerable<string> entityIds, DateTimeOffset start, DateTimeOffset end)
+    {
+        var observables = new List<IObservable<EntityValue>>();
+        // Simple align to segment duration
+        long ticks = start.Ticks - (start.Ticks % _segmentDuration.Ticks);
+        var current = new DateTimeOffset(ticks, TimeSpan.Zero);
+        
+        while (current <= end)
+        {
+            var segment = GetSegmentForTime(current);
+            observables.Add(segment.GetValues(entityIds, start, end));
+            current = current.Add(_segmentDuration);
+        }
+        return observables.Concat();
+    }
+
+    public void SaveValues(IEnumerable<EntityValue> values)
+    {
+        // Group values by the segment they belong to
+        var grouped = values.GroupBy(v => {
+            long ticks = v.Timestamp.Ticks - (v.Timestamp.Ticks % _segmentDuration.Ticks);
+            return new DateTimeOffset(ticks, TimeSpan.Zero);
+        });
+
+        foreach (var group in grouped)
+        {
+            var segment = GetSegmentForTime(group.Key);
+            segment.SaveValues(group);
+        }
+    }
+
+    private DataSegment GetSegmentForTime(DateTimeOffset anchor)
+    {
+        string fileName = $"vowels_{anchor:yyyyMMdd_HHmmss}.vowl";
+        string filePath = Path.Combine(_storagePath, fileName);
+
+        lock (_lock)
+        {
+            if (_openSegments.TryGetValue(filePath, out var segment)) return segment;
+            var newSegment = new DataSegment(filePath, anchor, _segmentDuration);
+            _openSegments[filePath] = newSegment;
+            return newSegment;
+        }
+    }
+
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            foreach (var segment in _openSegments.Values) segment.Dispose();
+            _openSegments.Clear();
+        }
+    }
+}
+```
 
 - [ ] **Step 3: Commit**
 ```bash
@@ -185,9 +319,94 @@ git commit -m "feat: add VowelsPluginAttribute for discovery"
 
 - [ ] **Step 1: Implement AssemblyLoadContext**
 Create a `PluginLoadContext` that handles dependency isolation for each plugin folder.
+```csharp
+// vowels/src/Vowels.Daemon/Plugins/PluginLoadContext.cs
+using System.Reflection;
+using System.Runtime.Loader;
+
+namespace Vowels.Daemon.Plugins;
+
+public class PluginLoadContext : AssemblyLoadContext
+{
+    private readonly AssemblyDependencyResolver _resolver;
+
+    public PluginLoadContext(string pluginPath) : base(isCollectible: true)
+    {
+        _resolver = new AssemblyDependencyResolver(pluginPath);
+    }
+
+    protected override Assembly? Load(AssemblyName assemblyName)
+    {
+        string? assemblyPath = _resolver.ResolveAssemblyToPath(assemblyName);
+        if (assemblyPath != null)
+        {
+            return LoadFromAssemblyPath(assemblyPath);
+        }
+
+        return null;
+    }
+
+    protected override IntPtr LoadUnmanagedDll(string unmanagedDllName)
+    {
+        string? libraryPath = _resolver.ResolveUnmanagedDllToPath(unmanagedDllName);
+        if (libraryPath != null)
+        {
+            return LoadUnmanagedDllFromPath(libraryPath);
+        }
+
+        return IntPtr.Zero;
+    }
+}
+```
 
 - [ ] **Step 2: Implement PluginManager Discovery**
 Scan `Plugins/` directory, load assemblies, and find classes decorated with `[VowelsPlugin]`.
+```csharp
+// vowels/src/Vowels.Daemon/Plugins/PluginManager.cs
+using System.Reflection;
+using Vowels.Common.Attributes;
+
+namespace Vowels.Daemon.Plugins;
+
+public class PluginManager
+{
+    public IEnumerable<Type> DiscoverPlugins(string pluginsDirectory)
+    {
+        var pluginTypes = new List<Type>();
+        
+        if (!Directory.Exists(pluginsDirectory)) return pluginTypes;
+
+        foreach (var pluginDir in Directory.GetDirectories(pluginsDirectory))
+        {
+            var pluginDlls = Directory.GetFiles(pluginDir, "*.dll");
+            
+            // Assume the main plugin dll matches the directory name, or just scan all
+            foreach (var dll in pluginDlls)
+            {
+                try
+                {
+                    var loadContext = new PluginLoadContext(dll);
+                    var assembly = loadContext.LoadFromAssemblyName(new AssemblyName(Path.GetFileNameWithoutExtension(dll)));
+                    
+                    foreach (var type in assembly.GetTypes())
+                    {
+                        if (type.GetCustomAttribute<VowelsPluginAttribute>() != null)
+                        {
+                            pluginTypes.Add(type);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to load plugin assembly {dll}: {ex.Message}");
+                }
+            }
+        }
+        
+        return pluginTypes;
+    }
+}
+```
 
 - [ ] **Step 3: Commit**
 ```bash
@@ -207,9 +426,17 @@ git commit -m "feat: implement dynamic plugin loading via AssemblyLoadContext"
 
 - [ ] **Step 1: Update Config Schema**
 Add a `Plugins` section to the master config that maps plugin names to their respective configurations.
+```csharp
+// This will be part of the object model loaded by YamlDotNet in Daemon
+public class VowelsConfig
+{
+    public Dictionary<string, object> Plugins { get; set; } = new();
+}
+```
 
 - [ ] **Step 2: Dispatch Config to Plugins**
 When `PluginManager` instantiates a plugin, it should look for a matching entry in the config and pass it to the plugin's `Initialize` method or constructor.
+*(Implementation details for instantiation are dependent on how plugins declare their interfaces, which is left to the actual plugin implementation).*
 
 - [ ] **Step 3: Commit**
 ```bash

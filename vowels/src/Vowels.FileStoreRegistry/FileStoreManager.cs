@@ -1,106 +1,86 @@
 using System;
 using System.Collections.Generic;
 using System.Reactive.Linq;
-using System.Reactive.Subjects;
-using System.Text.RegularExpressions;
 using System.Linq;
+using System.IO;
 using Vowels.Common;
+using Vowels.Common.Storage;
 
 namespace Vowels.FileStoreRegistry;
 
-public class FileStoreManager : IEntityStore, IDisposable
+public class FileStoreManager : IDataWriter, IDisposable
 {
     private readonly string _storagePath;
-    private readonly Dictionary<string, HourlyMmfFile> _openFiles = new();
+    private readonly TimeSpan _segmentDuration;
+    private readonly Dictionary<string, DataSegment> _openSegments = new();
     private readonly object _lock = new();
 
-    public FileStoreManager(string storagePath)
+    public FileStoreManager(string storagePath, TimeSpan segmentDuration)
     {
         _storagePath = storagePath;
-        if (!Directory.Exists(_storagePath))
-        {
-            Directory.CreateDirectory(_storagePath);
-        }
+        _segmentDuration = segmentDuration;
+        if (!Directory.Exists(_storagePath)) Directory.CreateDirectory(_storagePath);
     }
 
-    public IObservable<IHandle> DiscoverHistoricalHandles(IEntityRequest request)
+    public IEnumerable<string> GetKnownEntityIds()
     {
-        return Observable.Create<IHandle>(observer =>
+        var discovered = new HashSet<string>();
+        var files = Directory.GetFiles(_storagePath, "vowels_*.vowl");
+        foreach (var filePath in files)
         {
-            var discovered = new HashSet<string>();
-            var files = Directory.GetFiles(_storagePath, "vowels_*.vowl");
-            foreach (var filePath in files)
+            try
             {
-                try
-                {
-                    using var file = new HourlyMmfFile(filePath);
-                    foreach (var entityId in file.GetKnownEntityIds())
-                    {
-                        if (Matches(entityId, request) && discovered.Add(entityId))
-                        {
-                            // For now we assume SensorHandle, but in future we might store the type in the directory
-                            observer.OnNext(new SensorHandle(entityId));
-                        }
-                    }
-                }
-                catch
-                {
-                    // Skip corrupted or inaccessible files
-                }
+                // In a real scenario we'd parse the anchor from the filename, but for now we just pass dummy values to read the directory.
+                using var file = new DataSegment(filePath, DateTimeOffset.MinValue, _segmentDuration);
+                foreach (var id in file.GetKnownEntityIds()) discovered.Add(id);
             }
-            observer.OnCompleted();
-            return System.Reactive.Disposables.Disposable.Empty;
-        });
+            catch { }
+        }
+        return discovered;
     }
 
-    private bool Matches(string entityId, IEntityRequest request)
-    {
-        if (request is EntityIDRequest idReq) return entityId == idReq.EntityId;
-        if (request is EntitiesRegexRequest regexReq) return Regex.IsMatch(entityId, regexReq.Pattern);
-        if (request is IHandle handle) return entityId == handle.EntityId;
-        return false;
-    }
-
-    public IObservable<EntityValue> GetValues(IEnumerable<IHandle> handles, DateTime start, DateTime end)
+    public IObservable<EntityValue> GetValues(IEnumerable<string> entityIds, DateTimeOffset start, DateTimeOffset end)
     {
         var observables = new List<IObservable<EntityValue>>();
-        var current = new DateTime(start.Year, start.Month, start.Day, start.Hour, 0, 0);
+        // Simple align to segment duration
+        long ticks = start.Ticks - (start.Ticks % _segmentDuration.Ticks);
+        var current = new DateTimeOffset(ticks, TimeSpan.Zero);
         
         while (current <= end)
         {
-            var file = GetFileForTime(current);
-            observables.Add(file.GetValues(handles, start, end).ToObservable());
-            current = current.AddHours(1);
+            var segment = GetSegmentForTime(current);
+            observables.Add(segment.GetValues(entityIds, start, end));
+            current = current.Add(_segmentDuration);
         }
-
         return observables.Concat();
     }
 
-    public IObservable<EntityValue> SaveValues(IObservable<EntityValue> values)
+    public void SaveValues(IEnumerable<EntityValue> values)
     {
-        return values.Do(value =>
-        {
-            var file = GetFileForTime(value.Timestamp);
-            file.AddValue(value.Handle.EntityId, value.Type, value.Value, value.Timestamp);
+        // Group values by the segment they belong to
+        var grouped = values.GroupBy(v => {
+            long ticks = v.Timestamp.Ticks - (v.Timestamp.Ticks % _segmentDuration.Ticks);
+            return new DateTimeOffset(ticks, TimeSpan.Zero);
         });
+
+        foreach (var group in grouped)
+        {
+            var segment = GetSegmentForTime(group.Key);
+            segment.SaveValues(group);
+        }
     }
 
-    private HourlyMmfFile GetFileForTime(DateTime time)
+    private DataSegment GetSegmentForTime(DateTimeOffset anchor)
     {
-        string fileName = $"vowels_{time:yyyyMMdd_HH}.vowl";
+        string fileName = $"vowels_{anchor:yyyyMMdd_HHmmss}.vowl";
         string filePath = Path.Combine(_storagePath, fileName);
 
         lock (_lock)
         {
-            if (_openFiles.TryGetValue(filePath, out var file))
-            {
-                return file;
-            }
-
-            // TODO: Implement LRA cache/eviction if too many files are open
-            var newFile = new HourlyMmfFile(filePath);
-            _openFiles[filePath] = newFile;
-            return newFile;
+            if (_openSegments.TryGetValue(filePath, out var segment)) return segment;
+            var newSegment = new DataSegment(filePath, anchor, _segmentDuration);
+            _openSegments[filePath] = newSegment;
+            return newSegment;
         }
     }
 
@@ -108,11 +88,8 @@ public class FileStoreManager : IEntityStore, IDisposable
     {
         lock (_lock)
         {
-            foreach (var file in _openFiles.Values)
-            {
-                file.Dispose();
-            }
-            _openFiles.Clear();
+            foreach (var segment in _openSegments.Values) segment.Dispose();
+            _openSegments.Clear();
         }
     }
 }

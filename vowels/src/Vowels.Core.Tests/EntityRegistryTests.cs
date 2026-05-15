@@ -1,25 +1,35 @@
 using Xunit;
 using Vowels.Core.Registry;
-using Vowels.FileStoreRegistry;
 using Vowels.Common;
 using System.IO;
+using System.Reactive.Linq;
 
 namespace Vowels.Core.Tests;
 
+/// <summary>
+/// Minimal IEntityStore stub for unit tests that only test EntityRegistry logic.
+/// </summary>
+internal class NullEntityStore : IEntityStore
+{
+    public IObservable<EntityValue> GetValues(IEnumerable<IHandle> handles, DateTime start, DateTime end)
+        => Observable.Empty<EntityValue>();
+
+    public IObservable<EntityValue> SaveValues(IObservable<EntityValue> values)
+        => Observable.Empty<EntityValue>();
+
+    public IObservable<IHandle> DiscoverHistoricalHandles(IEntityRequest request)
+        => Observable.Empty<IHandle>();
+}
+
 public class EntityRegistryTests
 {
-    private const string TestDir = "registry_test_data";
-
     [Fact]
     public void RegisterEntity_ShouldCreateNewEntityId()
     {
         // Arrange
-        if (Directory.Exists(TestDir)) Directory.Delete(TestDir, true);
-        Directory.CreateDirectory(TestDir);
-        
         EntityRegistry.ResetForTesting();
 
-        var store = new FileStoreManager(TestDir);
+        var store = new NullEntityStore();
         EntityRegistry.Initialize(store);
         
         var registry = EntityRegistry.Instance;
@@ -30,8 +40,5 @@ public class EntityRegistryTests
         // Assert
         Assert.True(registry.IsEntityRegistered("sensor.living_room_temperature"));
         Assert.Contains(registry.Entities, e => e.EntityId == "sensor.living_room_temperature");
-        
-        // Cleanup
-        if (Directory.Exists(TestDir)) Directory.Delete(TestDir, true);
     }
 }

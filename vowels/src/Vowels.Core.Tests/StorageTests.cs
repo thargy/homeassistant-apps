@@ -72,20 +72,19 @@ public class StorageTests
     }
 
     [Fact]
-    public void HourlyMmfFile_ShouldHandleSchemaSwitching()
+    public void DataSegment_ShouldHandleSchemaSwitching()
     {
         var testFile = "test_schema_switch.vowl";
         if (File.Exists(testFile)) File.Delete(testFile);
 
-        using (var file = new HourlyMmfFile(testFile))
+        var anchor = new DateTimeOffset(2026, 5, 10, 0, 0, 0, TimeSpan.Zero);
+        using (var segment = new DataSegment(testFile, anchor, TimeSpan.FromHours(1)))
         {
-            // HourlyMmfFile has AddValue which handles schema internally
-            file.AddValue("sensor.test", VowelsType.Double, 20.0, new DateTime(2026, 5, 10, 0, 1, 0));
+            // DataSegment.AddValue handles schema switching internally.
+            segment.AddValue("sensor.test", VowelsType.Double, 20.0, new DateTime(2026, 5, 10, 0, 1, 0));
             
-            // Note: Since HourlyMmfFile internals are different from the old EntityStore,
-            // we should probably add verification methods if we want to check the schema explicitly,
-            // or just rely on the fact that it doesn't throw.
-            // For now, I've implemented AddValue in HourlyMmfFile to handle schema switching.
+            // Verify entity is registered in the segment.
+            Assert.Contains("sensor.test", segment.GetKnownEntityIds());
         }
 
         if (File.Exists(testFile)) File.Delete(testFile);

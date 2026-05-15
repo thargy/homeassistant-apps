@@ -2,7 +2,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Vowels.Common;
 using Vowels.Core.Registry;
-using Vowels.FileStoreRegistry;
 using Vowels.Daemon.Services;
 
 namespace Vowels.Daemon;
@@ -17,17 +16,10 @@ class Program
         var builder = Host.CreateApplicationBuilder(args);
         builder.Services.AddSingleton(config);
 
-        // 2. Storage Services (Singletons)
-        // Manual initialization in dependency order
-        var store = new FileStoreManager("vowels_data"); // Directory for hourly files
-        EntityRegistry.Initialize(store);
-
-        // Register instances in DI for components that still use injection
-        builder.Services.AddSingleton<IEntityStore>(store);
-        builder.Services.AddSingleton(EntityRegistry.Instance);
-
-        // 3. Background Workers (To be implemented in Phase 3)
-        // builder.Services.AddHostedService<StorageWorker>();
+        // 2. Storage and Plugin Services
+        // TODO (Task 6/7): Wire PluginManager here to discover and load plugins
+        // from the Plugins/ directory. FileStoreRegistry is now a plugin and no
+        // longer directly referenced from the Daemon project.
 
         using var host = builder.Build();
         await host.RunAsync();
