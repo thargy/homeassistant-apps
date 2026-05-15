@@ -36,6 +36,15 @@ public record VowelsConfig
     [JsonPropertyName("entities")]
     [YamlMember(Alias = "entities")]
     public List<EntitySchema> Entities { get; init; } = new();
+
+    /// <summary>
+    /// Plugin-specific configuration blocks. Each key is the plugin name (matching
+    /// <see cref="Vowels.Common.Attributes.VowelsPluginAttribute.Name"/>) and the value
+    /// is a free-form dictionary of settings dispatched to that plugin on startup.
+    /// </summary>
+    [JsonPropertyName("plugins")]
+    [YamlMember(Alias = "plugins")]
+    public Dictionary<string, Dictionary<string, object>> Plugins { get; init; } = new();
 }
 
 /// <summary>
@@ -76,6 +85,8 @@ public partial class VowelsJsonContext : JsonSerializerContext
 [YamlSerializable(typeof(EntitySchema))]
 [YamlSerializable(typeof(List<EntitySchema>))]
 [YamlSerializable(typeof(List<string>))]
+[YamlSerializable(typeof(Dictionary<string, Dictionary<string, object>>))]
+[YamlSerializable(typeof(Dictionary<string, object>))]
 public partial class VowelsYamlContext : StaticContext
 {
 }
