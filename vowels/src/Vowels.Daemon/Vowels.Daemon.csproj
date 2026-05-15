@@ -2,7 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Vowels.Core\Vowels.Core.csproj" />
-    <ProjectReference Include="..\Vowels.FileStoreRegistry\Vowels.FileStoreRegistry.csproj" />
     <ProjectReference Include="..\Vowels.Common\Vowels.Common.csproj" />
   </ItemGroup>
 
@@ -16,7 +15,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PublishAot>true</PublishAot>
+    <PublishAot>false</PublishAot>
     <OptimizationPreference>Speed</OptimizationPreference>
   </PropertyGroup>
 
