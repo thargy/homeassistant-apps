@@ -15,7 +15,7 @@ internal class DataSegment : IDataWriter, IDisposable
     private readonly IPageManager _pageManager;
     private readonly StringTable _stringTable;
     private readonly BlobSpace _blobSpace;
-    private readonly Dictionary<uint, uint> _entityToSchemaHead = new();
+    private readonly Dictionary<uint, uint> _entityToSchemaHead = [];
 
     public IEnumerable<string> GetKnownEntityIds()
     {
@@ -30,7 +30,7 @@ internal class DataSegment : IDataWriter, IDisposable
         _anchor = anchor;
         _duration = duration;
         _pageManager = new PagedMmfManager(filePath);
-        
+
         bool initialized = false;
         if (_pageManager.PageCount > 0)
         {
@@ -51,13 +51,13 @@ internal class DataSegment : IDataWriter, IDisposable
         {
             // If valid, trust the file length for now (manager already set it to PageCount)
         }
-        
+
         var headSpan = _pageManager.GetPageSpan(0);
         var head = MemoryMarshal.Read<BinarySpec.FileHeader>(headSpan);
-        
+
         _stringTable = new StringTable(_pageManager, head.StringTableHeadPageId);
         _blobSpace = new BlobSpace(_pageManager, head.BlobSpaceHeadPageId);
-        
+
         LoadDirectory();
     }
 
@@ -79,7 +79,7 @@ internal class DataSegment : IDataWriter, IDisposable
             StringTableHeadPageId = stringTableId,
             BlobSpaceHeadPageId = blobSpaceId
         };
-        
+
         MemoryMarshal.Write(span, in header);
     }
 
@@ -87,28 +87,27 @@ internal class DataSegment : IDataWriter, IDisposable
     {
         var headerSpan = _pageManager.GetPageSpan(0);
         var header = MemoryMarshal.Read<BinarySpec.FileHeader>(headerSpan);
-        
+
         uint currentPageId = header.DirectoryHeadPageId;
         while (currentPageId != 0)
         {
             var pageSpan = _pageManager.GetPageSpan(currentPageId);
             var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(pageSpan);
-            
+
             int recordSize = Marshal.SizeOf<BinarySpec.EntityDescriptor>();
             int offset = Marshal.SizeOf<BinarySpec.PageHeader>();
-            
+
             while (offset + recordSize <= pageHeader.DataOffset)
             {
-                var descriptor = MemoryMarshal.Read<BinarySpec.EntityDescriptor>(pageSpan.Slice(offset));
+                var descriptor = MemoryMarshal.Read<BinarySpec.EntityDescriptor>(pageSpan[offset..]);
                 _entityToSchemaHead[descriptor.EntityIdStringId] = descriptor.SchemaHeadPageId;
                 offset += recordSize;
             }
-            
+
             currentPageId = pageHeader.NextPageId;
         }
     }
 
-    
     public void SaveValues(IEnumerable<EntityValue> values)
     {
         foreach (var value in values)
@@ -121,13 +120,13 @@ internal class DataSegment : IDataWriter, IDisposable
     {
         uint id = _stringTable.GetOrAdd(entityId);
         var schema = GetActiveSchema(id, timestamp);
-        
+
         if (schema == null || schema.Value.StateType != type)
         {
-            SwitchSchema(id, timestamp, type, ReadOnlySpan<BinarySpec.AttributeDefinition>.Empty);
+            SwitchSchema(id, timestamp, type, []);
             schema = GetActiveSchema(id, timestamp);
         }
-        
+
         var schemaFull = GetActiveSchemaFull(id, timestamp);
         if (schemaFull != null)
         {
@@ -164,7 +163,7 @@ internal class DataSegment : IDataWriter, IDisposable
 
                 {
                     var span = _pageManager.GetPageSpan(currentPageId);
-                    entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span.Slice(currentOffset));
+                    entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span[currentOffset..]);
                     nextEntryPageId = entryHeader.NextSchemaEntryPageId;
                     nextEntryOffset = entryHeader.NextSchemaEntryOffset;
 
@@ -174,14 +173,14 @@ internal class DataSegment : IDataWriter, IDisposable
                     int attrOffset = currentOffset + Marshal.SizeOf<BinarySpec.SchemaEntryHeader>();
                     for (int i = 0; i < attrCount; i++)
                     {
-                        attrs[i] = MemoryMarshal.Read<BinarySpec.AttributeDefinition>(span.Slice(attrOffset));
+                        attrs[i] = MemoryMarshal.Read<BinarySpec.AttributeDefinition>(span[attrOffset..]);
                         attrOffset += Marshal.SizeOf<BinarySpec.AttributeDefinition>();
                     }
                 }
 
                 // Determine when this schema ends
-                long nextSchemaStart = nextEntryPageId != 0 
-                    ? MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(_pageManager.GetPageSpan(nextEntryPageId).Slice(nextEntryOffset)).StartTime 
+                long nextSchemaStart = nextEntryPageId != 0
+                    ? MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(_pageManager.GetPageSpan(nextEntryPageId)[nextEntryOffset..]).StartTime
                     : long.MaxValue;
 
                 if (entryHeader.StartTime < endUnix && nextSchemaStart > startUnix)
@@ -195,7 +194,7 @@ internal class DataSegment : IDataWriter, IDisposable
                     {
                         var pageValues = new List<EntityValue>();
                         uint nextDataPageId = 0;
-                        
+
                         {
                             var dataSpan = _pageManager.GetPageSpan(dataPageId);
                             var dataHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(dataSpan);
@@ -216,7 +215,7 @@ internal class DataSegment : IDataWriter, IDisposable
                                         DateTimeOffset.FromUnixTimeSeconds(ts).DateTime,
                                         100,
                                         entryHeader.StateType,
-                                        ReadValue(dataSpan.Slice(valueOffset), entryHeader.StateType)
+                                        ReadValue(dataSpan[valueOffset..], entryHeader.StateType)
                                     ));
                                 }
 
@@ -253,15 +252,14 @@ internal class DataSegment : IDataWriter, IDisposable
 
     private void SwitchSchema(uint entityId, DateTime startTime, VowelsType stateType, ReadOnlySpan<BinarySpec.AttributeDefinition> attributes)
     {
-        uint schemaHeadId;
-        if (!_entityToSchemaHead.TryGetValue(entityId, out schemaHeadId))
+        if (!_entityToSchemaHead.TryGetValue(entityId, out uint schemaHeadId))
         {
             schemaHeadId = _pageManager.AllocatePage(BinarySpec.PageType.SchemaChain);
             AppendToDirectory(entityId, schemaHeadId);
             _entityToSchemaHead[entityId] = schemaHeadId;
         }
 
-        var lastLoc = FindLastSchemaEntry(schemaHeadId);
+        var (PageId, Offset) = FindLastSchemaEntry(schemaHeadId);
 
         var header = new BinarySpec.SchemaEntryHeader
         {
@@ -273,10 +271,10 @@ internal class DataSegment : IDataWriter, IDisposable
 
         var newLoc = AddSchemaEntry(schemaHeadId, header, attributes);
 
-        if (lastLoc.PageId != 0)
+        if (PageId != 0)
         {
-            var span = _pageManager.GetPageSpan(lastLoc.PageId);
-            ref var prevHeader = ref MemoryMarshal.AsRef<BinarySpec.SchemaEntryHeader>(span.Slice(lastLoc.Offset));
+            var span = _pageManager.GetPageSpan(PageId);
+            ref var prevHeader = ref MemoryMarshal.AsRef<BinarySpec.SchemaEntryHeader>(span[Offset..]);
             prevHeader.NextSchemaEntryPageId = newLoc.PageId;
             prevHeader.NextSchemaEntryOffset = newLoc.Offset;
         }
@@ -285,7 +283,7 @@ internal class DataSegment : IDataWriter, IDisposable
     private BinarySpec.SchemaEntryHeader? GetActiveSchema(uint entityId, DateTime time)
     {
         if (!_entityToSchemaHead.TryGetValue(entityId, out uint currentPageId)) return null;
-        
+
         long targetTime = ((DateTimeOffset)time).ToUnixTimeSeconds();
         ushort currentOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>();
         BinarySpec.SchemaEntryHeader? bestMatch = null;
@@ -294,20 +292,23 @@ internal class DataSegment : IDataWriter, IDisposable
         {
             var span = _pageManager.GetPageSpan(currentPageId);
             var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(span);
-            
+
             if (pageHeader.DataOffset <= currentOffset) break;
 
-            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span.Slice(currentOffset));
-            
+            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span[currentOffset..]);
+
             if (entryHeader.StartTime <= targetTime)
             {
                 bestMatch = entryHeader;
                 if (entryHeader.NextSchemaEntryPageId == 0) break;
-                
+
                 currentPageId = entryHeader.NextSchemaEntryPageId;
                 currentOffset = entryHeader.NextSchemaEntryOffset;
             }
-            else break;
+            else
+            {
+                break;
+            }
         }
 
         return bestMatch;
@@ -316,7 +317,7 @@ internal class DataSegment : IDataWriter, IDisposable
     private (BinarySpec.SchemaEntryHeader Header, BinarySpec.AttributeDefinition[] Attributes)? GetActiveSchemaFull(uint entityId, DateTime time)
     {
         if (!_entityToSchemaHead.TryGetValue(entityId, out uint currentPageId)) return null;
-        
+
         long targetTime = ((DateTimeOffset)time).ToUnixTimeSeconds();
         BinarySpec.SchemaEntryHeader? bestMatchHeader = null;
         (uint PageId, ushort Offset) bestLoc = (0, 0);
@@ -326,21 +327,24 @@ internal class DataSegment : IDataWriter, IDisposable
         {
             var span = _pageManager.GetPageSpan(currentPageId);
             var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(span);
-            
+
             if (pageHeader.DataOffset <= currentOffset) break;
 
-            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span.Slice(currentOffset));
+            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span[currentOffset..]);
 
             if (entryHeader.StartTime <= targetTime)
             {
                 bestMatchHeader = entryHeader;
                 bestLoc = (currentPageId, currentOffset);
                 if (entryHeader.NextSchemaEntryPageId == 0) break;
-                
+
                 currentPageId = entryHeader.NextSchemaEntryPageId;
                 currentOffset = entryHeader.NextSchemaEntryOffset;
             }
-            else break;
+            else
+            {
+                break;
+            }
         }
 
         if (bestMatchHeader == null) return null;
@@ -350,7 +354,7 @@ internal class DataSegment : IDataWriter, IDisposable
         var bestMatchAttrs = new BinarySpec.AttributeDefinition[bestMatchHeader.Value.AttrCount];
         for (int i = 0; i < bestMatchAttrs.Length; i++)
         {
-            bestMatchAttrs[i] = MemoryMarshal.Read<BinarySpec.AttributeDefinition>(bestSpan.Slice(attrOffset));
+            bestMatchAttrs[i] = MemoryMarshal.Read<BinarySpec.AttributeDefinition>(bestSpan[attrOffset..]);
             attrOffset += Marshal.SizeOf<BinarySpec.AttributeDefinition>();
         }
 
@@ -371,24 +375,24 @@ internal class DataSegment : IDataWriter, IDisposable
             uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.DataChain);
             pageHeader.NextPageId = newPageId;
             MemoryMarshal.Write(lastPageSpan, in pageHeader);
-            
+
             lastPageId = newPageId;
             lastPageSpan = _pageManager.GetPageSpan(lastPageId);
             pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
         }
 
         int writeOffset = pageHeader.DataOffset;
-        BinaryPrimitives.WriteInt64LittleEndian(lastPageSpan.Slice(writeOffset), ((DateTimeOffset)time).ToUnixTimeSeconds());
+        BinaryPrimitives.WriteInt64LittleEndian(lastPageSpan[writeOffset..], ((DateTimeOffset)time).ToUnixTimeSeconds());
         writeOffset += 8;
 
-        WriteValue(lastPageSpan.Slice(writeOffset), schema.StateType, state);
+        WriteValue(lastPageSpan[writeOffset..], schema.StateType, state);
         writeOffset += BinarySpec.GetTypeSize(schema.StateType);
 
         foreach (var attrDef in attrDefs)
         {
             if (attributes.TryGetValue(attrDef.NameStringId, out var val))
             {
-                WriteValue(lastPageSpan.Slice(writeOffset), attrDef.Type, val);
+                WriteValue(lastPageSpan[writeOffset..], attrDef.Type, val);
             }
             writeOffset += BinarySpec.GetTypeSize(attrDef.Type);
         }
@@ -433,11 +437,11 @@ internal class DataSegment : IDataWriter, IDisposable
         {
             var pageSpan = _pageManager.GetPageSpan(currentPageId);
             var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(pageSpan);
-            
+
             if (pageHeader.DataOffset + recordSize <= BinarySpec.PageSize)
             {
                 var descriptor = new BinarySpec.EntityDescriptor { EntityIdStringId = entityId, SchemaHeadPageId = schemaHeadId };
-                MemoryMarshal.Write(pageSpan.Slice(pageHeader.DataOffset), in descriptor);
+                MemoryMarshal.Write(pageSpan[pageHeader.DataOffset..], in descriptor);
                 pageHeader.DataOffset += (ushort)recordSize;
                 MemoryMarshal.Write(pageSpan, in pageHeader);
                 return;
@@ -445,7 +449,7 @@ internal class DataSegment : IDataWriter, IDisposable
             lastPageId = currentPageId;
             currentPageId = pageHeader.NextPageId;
         }
-        
+
         // If we're here, we need a new page
         uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.Directory);
         if (lastPageId != 0)
@@ -465,7 +469,7 @@ internal class DataSegment : IDataWriter, IDisposable
         var newPageSpan = _pageManager.GetPageSpan(newPageId);
         var newPageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(newPageSpan);
         var newDescriptor = new BinarySpec.EntityDescriptor { EntityIdStringId = entityId, SchemaHeadPageId = schemaHeadId };
-        MemoryMarshal.Write(newPageSpan.Slice(newPageHeader.DataOffset), in newDescriptor);
+        MemoryMarshal.Write(newPageSpan[newPageHeader.DataOffset..], in newDescriptor);
         newPageHeader.DataOffset += (ushort)recordSize;
         MemoryMarshal.Write(newPageSpan, in newPageHeader);
     }
@@ -480,14 +484,14 @@ internal class DataSegment : IDataWriter, IDisposable
         {
             var span = _pageManager.GetPageSpan(currentPageId);
             var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(span);
-            
+
             if (pageHeader.DataOffset <= currentOffset) break;
 
-            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span.Slice(currentOffset));
+            var entryHeader = MemoryMarshal.Read<BinarySpec.SchemaEntryHeader>(span[currentOffset..]);
             lastLoc = (currentPageId, currentOffset);
-            
+
             if (entryHeader.NextSchemaEntryPageId == 0) break;
-            
+
             currentPageId = entryHeader.NextSchemaEntryPageId;
             currentOffset = entryHeader.NextSchemaEntryOffset;
         }
@@ -501,7 +505,7 @@ internal class DataSegment : IDataWriter, IDisposable
         var lastPageSpan = _pageManager.GetPageSpan(lastPageId);
         var pageHeader = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
         int recordSize = Marshal.SizeOf<BinarySpec.SchemaEntryHeader>() + (attributes.Length * Marshal.SizeOf<BinarySpec.AttributeDefinition>());
-        
+
         if (pageHeader.DataOffset + recordSize > BinarySpec.PageSize)
         {
             lastPageId = _pageManager.AllocatePage(BinarySpec.PageType.SchemaChain);
@@ -512,16 +516,16 @@ internal class DataSegment : IDataWriter, IDisposable
         }
 
         ushort writeOffset = pageHeader.DataOffset;
-        MemoryMarshal.Write(lastPageSpan.Slice(writeOffset), in header);
-        
+        MemoryMarshal.Write(lastPageSpan[writeOffset..], in header);
+
         // Fix: Write attributes as well
         int attrOffset = writeOffset + Marshal.SizeOf<BinarySpec.SchemaEntryHeader>();
         foreach (var attr in attributes)
         {
-            MemoryMarshal.Write(lastPageSpan.Slice(attrOffset), in attr);
+            MemoryMarshal.Write(lastPageSpan[attrOffset..], in attr);
             attrOffset += Marshal.SizeOf<BinarySpec.AttributeDefinition>();
         }
-        
+
         pageHeader.DataOffset = (ushort)attrOffset;
         MemoryMarshal.Write(lastPageSpan, in pageHeader);
         return (lastPageId, writeOffset);

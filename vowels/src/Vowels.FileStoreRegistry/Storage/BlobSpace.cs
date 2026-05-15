@@ -33,18 +33,18 @@ internal class BlobSpace
         {
             uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.BlobSpace);
             InitializePage(newPageId, BinarySpec.PageType.BlobSpace);
-            
+
             header.NextPageId = newPageId;
             MemoryMarshal.Write(lastPageSpan, in header);
-            
+
             lastPageId = newPageId;
             lastPageSpan = _pageManager.GetPageSpan(lastPageId);
             header = MemoryMarshal.Read<BinarySpec.PageHeader>(lastPageSpan);
         }
 
         ushort offset = header.DataOffset;
-        data.CopyTo(lastPageSpan.Slice(offset));
-        
+        data.CopyTo(lastPageSpan[offset..]);
+
         header.DataOffset = (ushort)(offset + requiredSize);
         MemoryMarshal.Write(lastPageSpan, in header);
 

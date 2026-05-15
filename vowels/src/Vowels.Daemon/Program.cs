@@ -1,14 +1,12 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Vowels.Common;
-using Vowels.Common.Attributes;
 using Vowels.Daemon.Plugins;
 using Vowels.Daemon.Services;
-using System.Reflection;
 
 namespace Vowels.Daemon;
 
-class Program
+public static class Program
 {
     static async Task Main(string[] args)
     {
@@ -20,22 +18,19 @@ class Program
 
         // 2. Discover and load plugins from the Plugins/ directory
         var pluginsPath = Path.Combine(AppContext.BaseDirectory, "Plugins");
-        var pluginManager = new PluginManager();
-        var pluginTypes = pluginManager.DiscoverPlugins(pluginsPath);
+        var pluginTypes = PluginManager.DiscoverPlugins(pluginsPath);
 
         // 3. Instantiate each discovered plugin and dispatch its scoped config
-        foreach (var pluginType in pluginTypes)
+        foreach (var plugin in pluginTypes)
         {
-            var attr = pluginType.GetCustomAttribute<VowelsPluginAttribute>()!;
-            
             // Look up plugin-specific config from the master config
-            config.Plugins.TryGetValue(attr.Name, out var pluginConfig);
+            config.Plugins.TryGetValue(plugin.Name, out var pluginConfig);
 
-            Console.WriteLine($"Loading plugin: {attr.Name} v{attr.Version}");
+            Console.WriteLine($"Loading plugin: {plugin.Name} v{plugin.Version}");
 
             // TODO: Define a standard IVowelsPlugin interface that plugins implement,
-            // then call plugin.Initialize(pluginConfig) here.
-            // For now, log the discovered plugin.
+            // then call pluginManager.CreateInstance(plugin, <ctor args from pluginConfig>)
+            // and register the result with the DI container.
         }
 
         using var host = builder.Build();

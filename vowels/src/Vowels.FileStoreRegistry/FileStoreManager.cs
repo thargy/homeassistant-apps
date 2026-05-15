@@ -4,15 +4,19 @@ using System.Reactive.Linq;
 using System.Linq;
 using System.IO;
 using Vowels.Common;
+using Vowels.Common.Attributes;
 using Vowels.Common.Storage;
+
+[assembly: VowelsPluginAssembly]
 
 namespace Vowels.FileStoreRegistry;
 
+[VowelsPlugin("FileStoreRegistry", "1.0.0")]
 public class FileStoreManager : IDataWriter, IDisposable
 {
     private readonly string _storagePath;
     private readonly TimeSpan _segmentDuration;
-    private readonly Dictionary<string, DataSegment> _openSegments = new();
+    private readonly Dictionary<string, DataSegment> _openSegments = [];
     private readonly object _lock = new();
 
     public FileStoreManager(string storagePath, TimeSpan segmentDuration)
@@ -45,7 +49,7 @@ public class FileStoreManager : IDataWriter, IDisposable
         // Simple align to segment duration
         long ticks = start.Ticks - (start.Ticks % _segmentDuration.Ticks);
         var current = new DateTimeOffset(ticks, TimeSpan.Zero);
-        
+
         while (current <= end)
         {
             var segment = GetSegmentForTime(current);

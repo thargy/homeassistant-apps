@@ -17,10 +17,10 @@ internal unsafe class PagedMmfManager : IPageManager
     public uint PageCount => _pageCount;
 
     private uint _allocatedPages = 0;
-    public uint AllocatedPages 
-    { 
-        get => _allocatedPages; 
-        set 
+    public uint AllocatedPages
+    {
+        get => _allocatedPages;
+        set
         {
             if (value > _pageCount) Grow((long)value * BinarySpec.PageSize);
             _allocatedPages = value;
@@ -30,12 +30,12 @@ internal unsafe class PagedMmfManager : IPageManager
     public PagedMmfManager(string filePath, long initialSize = 64 * 1024)
     {
         _filePath = filePath;
-        
+
         using (var fileStream = new FileStream(filePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite))
         {
             _currentSize = fileStream.Length;
             _pageCount = (uint)(_currentSize / BinarySpec.PageSize);
-            
+
             if (_currentSize > 0)
             {
                 _allocatedPages = _pageCount;
@@ -45,7 +45,7 @@ internal unsafe class PagedMmfManager : IPageManager
                 _allocatedPages = 0;
             }
         }
-        
+
         if (_currentSize > 0)
         {
             _mmf = MemoryMappedFile.CreateFromFile(_filePath, FileMode.Open, null, 0, MemoryMappedFileAccess.ReadWrite);
@@ -60,7 +60,7 @@ internal unsafe class PagedMmfManager : IPageManager
         {
             uint newPageId = _allocatedPages++;
             long requiredSize = (long)_allocatedPages * BinarySpec.PageSize;
-            
+
             if (requiredSize > _currentSize)
             {
                 Grow(requiredSize);
@@ -68,7 +68,7 @@ internal unsafe class PagedMmfManager : IPageManager
 
             var header = (BinarySpec.PageHeader*)(_basePtr + (newPageId * BinarySpec.PageSize));
             header->Type = type;
-            header->NextPageId = 0; 
+            header->NextPageId = 0;
             header->DataOffset = (ushort)Marshal.SizeOf<BinarySpec.PageHeader>();
 
             return newPageId;
@@ -78,14 +78,14 @@ internal unsafe class PagedMmfManager : IPageManager
     private void Grow(long newSize)
     {
         long growTo = Math.Max(newSize, _currentSize * 2);
-        
+
         if (_accessor != null)
         {
             _accessor.SafeMemoryMappedViewHandle.ReleasePointer();
             _accessor.Dispose();
             _accessor = null!;
         }
-        
+
         if (_mmf != null)
         {
             _mmf.Dispose();

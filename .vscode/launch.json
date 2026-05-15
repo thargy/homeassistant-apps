@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Vowels.Daemon (Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "program": "${workspaceFolder}/vowels/src/Vowels.Daemon/bin/Debug/net10.0/Vowels.Daemon.dll",
+      "preLaunchTask": "Vowels: Build",
+      "args": [],
+      "env": {
+        "DOTNET_ENVIRONMENT": "Development"
+      }
+    },
+    {
+      "name": "Vowels.Daemon (Attach)",
+      "type": "coreclr",
+      "request": "attach",
+      "processId": "${command:dotrush.pickProcess}"
+    }
+  ]
+}

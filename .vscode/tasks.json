@@ -59,6 +59,69 @@
         "panel": "new"
       },
       "problemMatcher": []
+    },
+    {
+      "label": "Vowels: Build",
+      "type": "shell",
+      "command": "dotnet build Vowels.slnx",
+      "options": {
+        "cwd": "${workspaceFolder}/vowels/src"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Vowels: Clean",
+      "type": "shell",
+      "command": "dotnet clean Vowels.slnx",
+      "options": {
+        "cwd": "${workspaceFolder}/vowels/src"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Vowels: Rebuild",
+      "type": "shell",
+      "command": "dotnet build Vowels.slnx --no-incremental",
+      "options": {
+        "cwd": "${workspaceFolder}/vowels/src"
+      },
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile",
+      "dependsOn": "Vowels: Clean"
+    },
+    {
+      "label": "Vowels: Test",
+      "type": "shell",
+      "command": "dotnet test Vowels.slnx",
+      "options": {
+        "cwd": "${workspaceFolder}/vowels/src"
+      },
+      "group": {
+        "kind": "test",
+        "isDefault": false
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": "$msCompile"
     }
   ],
   "inputs": [

@@ -9,8 +9,8 @@ namespace Vowels.FileStoreRegistry.Storage;
 internal class StringTable
 {
     private readonly IPageManager _pageManager;
-    private readonly Dictionary<string, uint> _stringToId = new();
-    private readonly Dictionary<uint, string> _idToString = new();
+    private readonly Dictionary<string, uint> _stringToId = [];
+    private readonly Dictionary<uint, string> _idToString = [];
     private uint _currentPageId;
     private int _currentOffset;
     private uint _nextId = 1;
@@ -29,7 +29,7 @@ internal class StringTable
         {
             var span = _pageManager.GetPageSpan(current);
             var header = MemoryMarshal.Read<BinarySpec.PageHeader>(span);
-            
+
             int offset = Marshal.SizeOf<BinarySpec.PageHeader>();
             while (offset + 2 <= header.DataOffset)
             {
@@ -40,7 +40,7 @@ internal class StringTable
                 uint id = _nextId++;
                 _stringToId[val] = id;
                 _idToString[id] = val;
-                
+
                 offset += 2 + len;
             }
 
@@ -64,12 +64,12 @@ internal class StringTable
         if (_currentOffset + entrySize > BinarySpec.PageSize)
         {
             uint newPageId = _pageManager.AllocatePage(BinarySpec.PageType.StringTable);
-            
+
             // Link current page to new page
             var currentSpan = _pageManager.GetPageSpan(_currentPageId);
             ref var currentHeader = ref MemoryMarshal.AsRef<BinarySpec.PageHeader>(currentSpan);
             currentHeader.NextPageId = newPageId;
-            
+
             // Initialize new page
             var newSpan = _pageManager.GetPageSpan(newPageId);
             var newHeader = new BinarySpec.PageHeader
@@ -89,7 +89,7 @@ internal class StringTable
         bytes.CopyTo(span.Slice(_currentOffset + 2, bytes.Length));
 
         _currentOffset += entrySize;
-        
+
         // Update header
         ref var header = ref MemoryMarshal.AsRef<BinarySpec.PageHeader>(span);
         header.DataOffset = (ushort)_currentOffset;
